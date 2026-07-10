@@ -80,6 +80,36 @@ Two idioms make this function safe under a dual-valued θ (the case that makes
 function clock_distribution end
 
 """
+    clock_distribution(model, θ::AbstractVector, key, state) -> UnivariateDistribution
+
+The STATE-DEPENDENT four-argument form of the seam, added for mid-flight
+re-evaluation (CG-M3). It is the distribution of clock `key` at parameter `θ`
+*when the process is in* `state` — the extra argument is what lets a clock's
+rate change while the clock stays continuously enabled (a repairman that speeds
+up as its queue grows, mass-action failure of a shrinking pool). The default
+falls back to the three-argument form,
+
+    clock_distribution(model, θ, key, state) = clock_distribution(model, θ, key),
+
+so a model whose clock distributions do NOT depend on state defines only the
+three-argument method and inherits this one for free — exactly how the sampler
+seam grew in ChronoSim. A model whose rates are re-evaluated mid-flight defines
+THIS four-argument method (and need not define the three-argument one); every
+distribution lookup inside this package routes through the four-argument form,
+passing the folded discrete state, so both kinds of model are served by one code
+path.
+
+STATES ARE θ-FREE. `state` is produced by folding the model's `fire` over the
+recorded key sequence — pure integer/boolean bookkeeping with no parameter in
+it. That is the carry coupling's semantics made concrete: a segment's opening
+state is frozen at record-build time, and only the DISTRIBUTION rebuilt from it
+carries `∂θ`. The same eltype-stable construction idioms as the three-argument
+form apply.
+"""
+clock_distribution(model, θ::AbstractVector, key, state) =
+    clock_distribution(model, θ, key)
+
+"""
     fire(model, state, key) -> new state
 
 The (pure, deterministic) state transition when clock `key` fires. Returns a

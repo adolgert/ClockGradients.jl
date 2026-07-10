@@ -54,39 +54,90 @@ the retained uniforms and the event order frozen. `T = typeof(one(eltype(θ)) *
 1.0)`, so this runs at `Float64` (reproducing `record.time` to round-off — the
 pinned identity) and at `ForwardDiff.Dual` (carrying ∂θ into the times).
 
-For each firing `k` in order it rebuilds `d = clock_distribution(model, θ,
-record.key[k])`, reads the enabling time `te` and the last-draw anchor `tdraw`
-as EARLIER replayed times through the back-references, and applies the inversion
-recurrence
+The replay DISPATCHES on `record.coupling` — this is where the coupling label
+grows teeth. Both replays fold the θ-free discrete state once and rebuild each
+segment's distribution with the four-argument `clock_distribution(model, θ, key,
+state)`, so a state-dependent model flows ∂θ through re-evaluated rates while a
+state-independent one inherits the three-argument form:
 
-    times[k] = te + invlogccdf(d, record.logu[k] + logccdf(d, tdraw − te)).
+  * `:redraw` — the general last-draw recurrence
+    `times[k] = te + invlogccdf(d_last, logu[k] + logccdf(d_last, tdraw − te))`,
+    with `d_last` the distribution over the clock's LAST segment (at the
+    `draw_step` state) and `tdraw = times[draw_step]`. For a never-re-evaluated
+    clock `draw_step == enable_step`, `tdraw == te`, the correction term is
+    `logccdf(d, 0) = 0`, and this collapses to the CG-M1/M2 recurrence.
+  * `:carry` — the conditional-survival chain pushforward: start from the
+    enabling age `invlogccdf(d₁, logu[k])` and map it through each segment by
+    matching conditional survival, `a_f ← invlogccdf(d_new, logccdf(d_new, a) +
+    logccdf(d, a_f) − logccdf(d, a))`, where the segment ages `a = times[seg_step]
+    − te` are themselves REPLAYED (dual) quantities. A single-segment chain
+    reduces to `te + invlogccdf(d₁, logu[k])`.
 
-THE v0 REDUCTION. CG-M1 records store `logu` as the TOTAL-lifetime survival
-coordinate (`logccdf(d, time[k] − te)` at θ₀) and set `draw_step == enable_step`,
-so `tdraw == te`, the correction term `logccdf(d, tdraw − te) = logccdf(d, 0) =
-0`, and the recurrence collapses to `te + invlogccdf(d, logu[k])`. At θ₀ that is
-`te + (time[k] − te) = time[k]` exactly — the pinned round-trip. The general
-`logccdf(d, tdraw − te)` term is written out anyway so that CG-M3's mid-flight
-re-evaluation (a later re-draw with `draw_step ≠ enable_step`) slots in with no
-change to this recurrence.
-
-Under a dual θ every clock's distribution must be in the dual-safe family set
-(`Exponential`, `Weibull`, `LogNormal`); a Gamma or other Rmath-quantile family
-raises the documented `ArgumentError`.
+Under a dual θ every segment distribution must be dual-safe (`Exponential`,
+`Weibull`, `LogNormal`); a Gamma or other Rmath-quantile family raises the
+documented `ArgumentError`.
 """
 function replay_times(model, θ::AbstractVector, record::GradientRecord)
+    if record.coupling === :carry
+        _replay_carry(model, θ, record)
+    elseif record.coupling === :redraw
+        _replay_redraw(model, θ, record)
+    else
+        throw(ArgumentError("replay needs coupling :redraw or :carry, got :$(record.coupling)"))
+    end
+end
+
+function _replay_redraw(model, θ::AbstractVector, record::GradientRecord)
+    record.coupling === :redraw || throw(ArgumentError(
+        "redraw replay requires a :redraw-coupled record; got :$(record.coupling). " *
+        "A :carry record's retained uniform is the ENABLING-draw uniform, which the " *
+        "last-draw recurrence would misread — use the carry chain replay instead."))
     T = typeof(one(eltype(θ)) * 1.0)
-    guard = T <: ForwardDiff.Dual      # only differentiable replay needs the check
+    guard = T <: ForwardDiff.Dual
+    states = _fold_states(model, record.key)
     n = length(record)
     times = Vector{T}(undef, n)
     for k in 1:n
-        d = clock_distribution(model, θ, record.key[k])
-        guard && _assert_dual_safe(d, record.key[k])
         es = record.enable_step[k]
         ds = record.draw_step[k]
+        # The firing distribution is the one over the LAST segment: the state
+        # after the last re-evaluation step (states[ds+1]; ds == 0 → initial).
+        d = clock_distribution(model, θ, record.key[k], states[ds + 1])
+        guard && _assert_dual_safe(d, record.key[k])
         te = es == 0 ? zero(T) : times[es]
         tdraw = ds == 0 ? zero(T) : times[ds]
         times[k] = te + invlogccdf(d, record.logu[k] + logccdf(d, tdraw - te))
+    end
+    times
+end
+
+function _replay_carry(model, θ::AbstractVector, record::GradientRecord)
+    record.coupling === :carry || throw(ArgumentError(
+        "carry replay requires a :carry-coupled record; got :$(record.coupling). " *
+        "A :redraw record's retained uniform is the LAST-segment conditional " *
+        "uniform, not the enabling-draw uniform the chain pushforward starts from."))
+    T = typeof(one(eltype(θ)) * 1.0)
+    guard = T <: ForwardDiff.Dual
+    states = _fold_states(model, record.key)
+    n = length(record)
+    times = Vector{T}(undef, n)
+    for k in 1:n
+        es = record.enable_step[k]
+        te = es == 0 ? zero(T) : times[es]
+        i0, i1 = record.seg_offset[k], record.seg_offset[k + 1] - 1
+        s0 = record.seg_step[i0]
+        d = clock_distribution(model, θ, record.key[k], states[s0 + 1])
+        guard && _assert_dual_safe(d, record.key[k])
+        af = invlogccdf(d, record.logu[k])
+        for i in (i0 + 1):i1
+            si = record.seg_step[i]
+            a = (si == 0 ? zero(T) : times[si]) - te
+            dnew = clock_distribution(model, θ, record.key[k], states[si + 1])
+            guard && _assert_dual_safe(dnew, record.key[k])
+            af = invlogccdf(dnew, logccdf(dnew, a) + logccdf(d, af) - logccdf(d, a))
+            d = dnew
+        end
+        times[k] = te + af
     end
     times
 end

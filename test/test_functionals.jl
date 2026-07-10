@@ -11,7 +11,7 @@ const MINI_TIMES = [1.0, 2.0, 3.0]
 const MINI_HORIZON = 5.0
 const MINI_REC = GradientRecord{Tuple{Symbol,Int}}(
     MINI_KEYS, MINI_TIMES, fill(NaN, 3), zeros(Int, 3), zeros(Int, 3),
-    MINI_HORIZON, :redraw)
+    [1, 2, 3, 4], zeros(Int, 3), MINI_HORIZON, :redraw)
 
 testset_if("functionals: the failure count lowers as a TerminalObservable equal to the hand-counted number of :fail events") do
     # States: s0 (0 down, nfail 0) → fail1 (nfail 1) → fail2 (nfail 2) →

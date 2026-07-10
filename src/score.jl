@@ -47,11 +47,14 @@ function score_loglikelihood(model, θ::AbstractVector, record::GradientRecord)
         sync_enabling_times!(te, keys_now, t)
         t1 = record.time[i]
         key = record.key[i]
+        # Over the interval [t, t1] the discrete `state` is constant, so each
+        # enabled clock's distribution is the four-argument form at this state —
+        # which for a state-dependent model IS the currently-re-evaluated rate.
         for k in keys_now
-            d = clock_distribution(model, θ, k)
+            d = clock_distribution(model, θ, k, state)
             ll += logccdf(d, t1 - te[k]) - logccdf(d, t - te[k])
         end
-        dwin = clock_distribution(model, θ, key)
+        dwin = clock_distribution(model, θ, key, state)
         ll += loghazard(dwin, t1 - te[key])
         state = fire(model, state, key)
         delete!(te, key)
@@ -61,7 +64,7 @@ function score_loglikelihood(model, θ::AbstractVector, record::GradientRecord)
     sync_enabling_times!(te, keys_now, t)
     if isfinite(record.horizon)
         for k in keys_now
-            d = clock_distribution(model, θ, k)
+            d = clock_distribution(model, θ, k, state)
             ll += logccdf(d, record.horizon - te[k]) - logccdf(d, t - te[k])
         end
     end
@@ -179,7 +182,7 @@ function run_recorded(rng::AbstractRNG, model, θ, method; horizon::Real)
         end
         for k in cur
             if !(k in active)           # newly enabled: fresh te = context time
-                enable!(ctx, k, clock_distribution(model, θ, k))
+                enable!(ctx, k, clock_distribution(model, θ, k, state))
                 push!(active, k)
             end
         end
