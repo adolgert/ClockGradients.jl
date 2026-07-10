@@ -24,8 +24,11 @@ function testset_if(body, name::AbstractString)
 end
 
 include("machinerepair.jl")
+include("races.jl")
 
 include("test_hazards.jl")
 include("test_records.jl")
 include("test_functionals.jl")
 include("test_score.jl")
+include("test_ipa.jl")
+include("test_pairing.jl")

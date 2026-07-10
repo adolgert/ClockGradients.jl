@@ -135,3 +135,41 @@ function expected_failures_ctmc(λ, μ, n::Integer, T::Real; nsteps::Integer=400
     end
     y[n + 2]
 end
+
+"""
+    expected_downtime_ctmc(λ, μ, n, T; nsteps=4000)
+
+Exact expected INTEGRATED downtime `E[∫₀ᵀ (#down)(t) dt]` for the same
+birth-death CTMC. The accumulator row differs from `expected_failures_ctmc` by
+exactly ONE term: `dm/dt = Σ_k k·p_k(t) = E[#down(t)]`, so its time integral is
+the expected integrated downtime. Same promoted-eltype augmented forward
+equation, so `ForwardDiff.derivative` flows through it to give the pairing test's
+`d E[∫down]/dλ` oracle (the ≈27.22 regime from proto_pathwise_ipa.md, against
+which IPA is ≈69% biased low).
+"""
+function expected_downtime_ctmc(λ, μ, n::Integer, T::Real; nsteps::Integer=4000)
+    S = promote_type(typeof(λ), typeof(μ), typeof(float(T)))
+    y = zeros(S, n + 2)
+    y[1] = one(S)
+    function rhs(y)
+        dy = zeros(S, n + 2)
+        for k in 0:n
+            fail = (n - k) * λ
+            rep = k > 0 ? μ : zero(S)
+            dy[k + 1] -= (fail + rep) * y[k + 1]
+            k < n && (dy[k + 2] += fail * y[k + 1])
+            k > 0 && (dy[k] += rep * y[k + 1])
+            dy[n + 2] += k * y[k + 1]        # accumulate E[#down], not the failure rate
+        end
+        dy
+    end
+    h = T / nsteps
+    for _ in 1:nsteps
+        k1 = rhs(y)
+        k2 = rhs(y .+ (h / 2) .* k1)
+        k3 = rhs(y .+ (h / 2) .* k2)
+        k4 = rhs(y .+ h .* k3)
+        y .+= (h / 6) .* (k1 .+ 2 .* k2 .+ 2 .* k3 .+ k4)
+    end
+    y[n + 2]
+end
