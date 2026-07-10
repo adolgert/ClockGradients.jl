@@ -21,7 +21,10 @@ Three estimator families share one record and one model contract:
   zero; contended hitting times come out wrong-signed).
 * **Weak-derivative branching (Pflug / Hahn–Jordan)** —
   `branching_gradient`: recovers the event-order sensitivity IPA drops by
-  forcing coupled clones of a live ChronoSim simulation. Unbiased for
+  forcing coupled clones of a live simulation. Written against a nine-verb
+  branchable-world protocol (`branch_peek`, `branch_clone`, ..., certified by
+  `check_branchable`): ChronoSim conforms through a package extension, and
+  any framework that implements the verbs gets the estimator. Unbiased for
   terminal-state functionals, at the cost of dozens of clones per
   replication.
 
@@ -66,9 +69,10 @@ registered.
 
 Build the manual locally with `julia --project=docs docs/make.jl`. The manual
 covers choosing an estimator (with the measured validity evidence), record
-ingestion and coupling labels, a runnable machine-repair worked example, the
-functional-class × estimator × coupling validity table, and the package
-invariants.
+ingestion and coupling labels, the branchable-world interface (how a
+framework adopts the branching estimator), a runnable machine-repair worked
+example, the functional-class × estimator × coupling validity table, and the
+package invariants.
 
 Run the test suite from the package root with
 `julia --project=test test/runtests.jl`; a substring argument filters

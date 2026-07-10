@@ -180,11 +180,15 @@ clones the entire running simulation twice, forces a winner drawn from each
 vector, continues both clones to the horizon under common random numbers, and
 differences the terminal functionals.
 
-*Needs:* a live `ChronoSim.SimulationFSM` (not a record), because forcing a
-firing changes which clocks are subsequently enabled — only the running world
-can continue the counterfactual. The working method loads through the
-ClockGradients–ChronoSim package extension when ChronoSim is in the
-environment.
+*Needs:* a live **branchable world** (not a record), because forcing a firing
+changes which clocks are subsequently enabled — only the running world can
+continue the counterfactual. The estimator is written against the nine-verb
+[branchable-world interface](branchable.md): ChronoSim's `SimulationFSM`
+conforms through the ClockGradients–ChronoSim package extension, and ANY
+framework that implements the nine verbs for its world type — certified by
+[`check_branchable`](@ref) — gets the estimator unchanged. The package's own
+proof of that claim is a test world built directly on the raw CompetingClocks
+sampler layer, with no ChronoSim anywhere in it.
 
 *Costs:* on the machine-repair model at 800 replications the estimator spawned
 roughly 76 clones per replication — 38 coupled forced pairs — each continued
@@ -194,9 +198,10 @@ selection term becomes biased, and the estimator warns.
 
 *Measured:* on the machine-repair terminal failure count — the functional
 class where IPA is identically zero — branching matched the differentiated
-CTMC oracle `[10.727, 3.568]` in both components at `z = [1.18, 0.32]`, and
-agreed with this package's own score estimator on the same model at pooled
-`z = [1.40, 0.49]`.
+CTMC oracle `[10.727, 3.568]` in both components at `z = [1.01, 0.04]`
+through the ChronoSim adapter and at `z = [0.46, 0.26]` through the
+ChronoSim-free test world, and agreed with this package's own score estimator
+on the same model at pooled `z = [1.24, 0.22]`.
 
 ## The decision, in short
 
@@ -205,7 +210,8 @@ agreed with this package's own score estimator on the same model at pooled
 2. No flag: report the IPA estimate (tighter) and keep the score's mean-score
    drift alarm as a health check.
 3. Flag: report the score estimate. If the functional is order-sensitive and
-   the score's variance is unacceptable, and the model exists as a ChronoSim
-   simulation, use [`branching_gradient`](@ref).
+   the score's variance is unacceptable, and the model exists as a live
+   [branchable world](branchable.md) — a ChronoSim simulation via the
+   extension, or any conforming framework — use [`branching_gradient`](@ref).
 4. Consult the [validity table](invariants.md) before trusting any unpaired
    pathwise number.

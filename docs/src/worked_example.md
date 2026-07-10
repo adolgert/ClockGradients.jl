@@ -213,9 +213,13 @@ higher-variance estimate survives the pairing — the weak-derivative branching
 estimator gives an unbiased alternative. It needs a live simulation, not a
 record: the same machine-repair model is written as a ChronoSim model, with
 the failure counter carried in the physical state so the functional is a
-terminal-state read. (This mirrors the model in the package's
-`test/test_branching.jl`; see ChronoSim's manual for the event system and its
-"Cloning and branching" page for the verbs the estimator drives.)
+terminal-state read. The estimator itself only speaks the
+[branchable-world interface](branchable.md); the ClockGradients–ChronoSim
+extension makes the `SimulationFSM` conform and supplies the
+`(sim_factory, initializer)` convenience method used below. (This mirrors the
+model in the package's `test/test_branching.jl`; see ChronoSim's manual for
+the event system and its "Cloning and branching" page for the capabilities
+the adapter maps.)
 
 ```@example worked
 module BranchRepairModel
@@ -323,8 +327,10 @@ Both components of the gradient — the failure-rate derivative IPA pinned at
 zero, and the repair-rate derivative — match the differentiated CTMC oracle,
 at the price of roughly 76 clones per replication (the `clones_per_rep`
 field: two coupled clones per Hahn–Jordan branch). At 800 replications the
-same configuration measures `z = [1.18, 0.32]` against the oracle
-`[10.727, 3.568]`, the package's exit criterion for this estimator.
+same configuration measures `z = [1.01, 0.04]` against the oracle
+`[10.727, 3.568]`, the package's exit criterion for this estimator — and the
+[branchable-world interface](branchable.md) page shows the same oracle
+reproduced through a world with no ChronoSim in it at all.
 
 ## What to take away
 

@@ -127,13 +127,17 @@ branch_sim_factory() = SimulationFSM(
     BranchRepairModel.MachineRepairState(_BR_N), BranchRepairModel.repair_events();
     seed=UInt64(1), key_type=Tuple, params=_BR_θ)
 
-# The extension module, for pinning its internals directly.
+# The extension module: its job now is the branchable-world adapter plus the
+# back-compatible convenience method.
 const _BR_EXT = Base.get_extension(ClockGradients, :ClockGradientsChronoSimExt)
 
-testset_if("branching: the extension is loaded and branching_gradient has a working method once ChronoSim is present") do
+testset_if("branching: the extension is loaded, the convenience method exists, and the core generic estimator exists without it") do
     @test _BR_EXT !== nothing
     @test hasmethod(branching_gradient,
                     Tuple{Function,Any,AbstractVector,Any})
+    # The estimator itself lives in the core, written against the protocol.
+    @test hasmethod(branching_gradient,
+                    Tuple{Function,AbstractVector,Any})
 end
 
 testset_if("branching: the ChronoSim machine-repair mean failure count matches the lumped CTMC oracle, validating the ported model before its derivative") do
@@ -214,11 +218,11 @@ testset_if("branching: a θ-independent selection has Hahn-Jordan weight c == 0,
     ages0 = CompetingClocks.enabled_ages(sim0.sampler, t0)
     ek0 = [a[1] for a in ages0]
     ea0 = [a[2] for a in ages0]
-    ev0 = Dict(ChronoSim.clock_key(ev) => ev for ev in ChronoSim.get_enabled_events(sim0))
-    events0 = [ev0[k] for k in ek0]
+    # The pmf and its Hahn–Jordan split are core internals now, driven through
+    # the branchable verbs of the adapter (sim0 IS the world).
     J = ForwardDiff.jacobian(
-        θx -> _BR_EXT.selection_probs(events0, ea0, sim0.physical, θx, t0), _BR_θ)
-    c0, _, _ = _BR_EXT.hahn_jordan(view(J, :, 1))
+        θx -> ClockGradients.selection_probs(sim0, ek0, ea0, θx), _BR_θ)
+    c0, _, _ = ClockGradients.hahn_jordan(view(J, :, 1))
     @test c0 == 0.0
 
     # Second pin: the branch is deterministic in (state, forced key, rekey seed).
@@ -244,8 +248,8 @@ testset_if("branching: a θ-independent selection has Hahn-Jordan weight c == 0,
     @test found
     ages = CompetingClocks.enabled_ages(sim.sampler, tstar)
     key = ages[1][1]
-    fA = _BR_EXT.branch_value(sim, key, tstar, UInt64(777), _BR_T, _BR_FSTATE)
-    fB = _BR_EXT.branch_value(sim, key, tstar, UInt64(777), _BR_T, _BR_FSTATE)
+    fA = ClockGradients.branch_value(sim, key, tstar, UInt64(777), _BR_T, _BR_FSTATE)
+    fB = ClockGradients.branch_value(sim, key, tstar, UInt64(777), _BR_T, _BR_FSTATE)
     @test fA == fB
 end
 

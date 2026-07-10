@@ -21,8 +21,10 @@ order and differentiates the replayed firing times themselves (`replay_times`,
 `:carry`/`:redraw` coupling labels. `paired_estimate` runs both on the same
 records and turns their disagreement into a bias verdict. The weak-derivative
 branching estimator (`branching_gradient`) recovers event-order sensitivity by
-cloning a live `ChronoSim` simulation; its working method loads through the
-ClockGradients–ChronoSim package extension.
+cloning a live simulation; it is written against the nine-verb branchable-world
+protocol (`branch_peek`, `branch_commit!`, ...), so any framework whose world
+implements the protocol — certified by `check_branchable` — gets it, and the
+sibling event-driven framework adopts it through a package extension.
 
 Design findings this package exists to extract are recorded in the WorldTimer
 `knowledge/` notes; the code favors concrete clock-key types `K`, flat typed
@@ -37,9 +39,9 @@ using CompetingClocks: SamplingContext, SamplerBuilder,
     with_recorder, close_record!, recorded_firings,
     TrajectoryRecorder, ClockFiredRecord
 using Distributions: UnivariateDistribution, Exponential, Weibull, LogNormal,
-    logpdf, logccdf, invlogccdf
+    logpdf, logccdf, invlogccdf, partype
 using ForwardDiff: ForwardDiff
-using Random: AbstractRNG
+using Random: AbstractRNG, Xoshiro
 using Statistics: mean, std
 
 # Hazard helpers over Distributions.jl types.
@@ -67,8 +69,14 @@ export replay_times, ipa_gradient, ipa_estimate, ipa_simulate_and_estimate
 # The score/IPA pairing verdict.
 export PairedGradient, paired_estimate, paired_simulate_and_estimate
 
-# The weak-derivative branching estimator. The generic function is declared in
-# the core; its working method is added by the ChronoSim package extension.
+# The branchable-world protocol: nine duck-typed verbs a framework implements
+# for its world type to receive the branching estimator, plus the conformance
+# harness that certifies the semantic obligations.
+export branch_peek, branch_commit!, branch_force!, branch_clone, branch_rekey!,
+    branch_time, branch_enabled_ages, branch_clock_distribution, branch_state
+export check_branchable
+
+# The weak-derivative branching estimator, written against the protocol.
 export branching_gradient
 
 include("hazards.jl")
@@ -78,6 +86,8 @@ include("functionals.jl")
 include("score.jl")
 include("ipa.jl")
 include("pairing.jl")
-include("branching_api.jl")
+include("branchable.jl")
+include("branching.jl")
+include("conformance.jl")
 
 end # module ClockGradients

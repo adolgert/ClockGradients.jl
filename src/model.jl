@@ -92,8 +92,9 @@ falls back to the three-argument form,
     clock_distribution(model, θ, key, state) = clock_distribution(model, θ, key),
 
 so a model whose clock distributions do NOT depend on state defines only the
-three-argument method and inherits this one for free — exactly how the sampler
-seam grew in ChronoSim. A model whose rates are re-evaluated mid-flight defines
+three-argument method and inherits this one for free — the same way the sibling
+event-driven framework grew its four-argument `enable` seam. A model whose
+rates are re-evaluated mid-flight defines
 THIS four-argument method (and need not define the three-argument one); every
 distribution lookup inside this package routes through the four-argument form,
 passing the folded discrete state, so both kinds of model are served by one code

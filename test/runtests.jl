@@ -26,6 +26,7 @@ end
 include("machinerepair.jl")
 include("races.jl")
 include("loadrepair.jl")
+include("toyworld.jl")
 
 include("test_hazards.jl")
 include("test_records.jl")
@@ -35,3 +36,4 @@ include("test_ipa.jl")
 include("test_pairing.jl")
 include("test_chains.jl")
 include("test_branching.jl")
+include("test_branchable.jl")

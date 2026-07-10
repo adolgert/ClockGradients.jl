@@ -26,10 +26,13 @@ public surfaces:
   * **ChronoSim.jl** supplies the running world for the one estimator that
     needs more than a record: its "How the system fits together" chapter
     draws an architecture with an estimator-layer box outside both packages,
-    and this package is that box. The branching estimator drives ChronoSim's
-    `clone`, `rekey_streams!`, and `force_fire!` verbs (see ChronoSim's
+    and this package is that box. The branching estimator is written against
+    a nine-verb [branchable-world interface](branchable.md); ChronoSim's
+    `SimulationFSM` implements those verbs (via its `clone`,
+    `rekey_streams!`, and `force_fire!` capabilities — see ChronoSim's
     "Cloning and branching" page) through a package extension that loads only
-    when ChronoSim is present.
+    when ChronoSim is present, and any other framework can conform the same
+    way.
 
 ## The three estimators
 
@@ -53,9 +56,9 @@ Hahn–Jordan decomposition) recovers exactly the event-order sensitivity that
 IPA drops: at each race along a base path it clones the whole running
 simulation, forces a different winner in each clone, and differences the
 outcomes. It is unbiased for terminal-state functionals including counts, and
-it is the expensive member of the family — it requires a live ChronoSim
-simulation rather than a record, and it spawns on the order of dozens of
-clones per replication.
+it is the expensive member of the family — it requires a live
+[branchable world](branchable.md) rather than a record, and it spawns on the
+order of dozens of clones per replication.
 
 ## Which one should I reach for?
 
@@ -68,7 +71,8 @@ bias, and agreement is a certificate that the cheaper, tighter IPA number can
 be trusted. When the pairing flags a bias — which it does exactly on the
 functionals whose sensitivity lives in event order — fall back to the score
 estimate, or to [`branching_gradient`](@ref) when the score's variance on
-that functional is too large and a live ChronoSim model is available. The
+that functional is too large and the model exists as a live branchable world
+(ChronoSim via the extension, or any conforming framework). The
 manual page [Choosing an estimator](choosing.md) walks this decision with the
 package's own measured evidence.
 
@@ -81,6 +85,10 @@ package's own measured evidence.
     from a `TrajectoryRecorder` or from a bare firing trace, the coupling
     label, the enabling-time audit, and segment chains for state-dependent
     models.
+  * [The branchable-world interface](branchable.md) — the nine-verb protocol
+    a framework implements to receive the branching estimator, with a worked
+    adoption built on the raw sampler layer and the `check_branchable`
+    conformance harness.
   * [Worked example](worked_example.md) — the machine-repair model end to
     end: model contract, simulation, score, IPA, the paired verdict, and the
     branching variant on a ChronoSim model.

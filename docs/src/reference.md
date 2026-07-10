@@ -84,11 +84,32 @@ paired_estimate
 paired_simulate_and_estimate
 ```
 
+## The branchable-world protocol
+
+The nine duck-typed verbs a framework implements for its world type to receive
+the branching estimator (see [The branchable-world
+interface](branchable.md)), and the conformance harness that certifies the
+semantic obligations. ChronoSim's `SimulationFSM` conforms through the
+ClockGradients–ChronoSim package extension.
+
+```@docs
+branch_peek
+branch_commit!
+branch_force!
+branch_clone
+branch_rekey!
+branch_time
+branch_enabled_ages
+branch_clock_distribution
+branch_state
+check_branchable
+```
+
 ## The branching estimator
 
-The generic function is declared in the core package; its working method is
-added by the ClockGradients–ChronoSim package extension, which loads when
-ChronoSim is present in the environment.
+The estimator lives in the core package, written only against the protocol
+above; the ChronoSim package extension adds the convenience method that takes
+a `(sim_factory, initializer)` pair.
 
 ```@docs
 branching_gradient

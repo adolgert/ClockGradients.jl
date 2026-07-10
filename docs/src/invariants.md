@@ -59,8 +59,9 @@ pairing's four-standard-error test fired):
     occupancy-exact carry record; the pairing flags it at `z = 27.5`.
   * *Terminal count via branching* (machine repair, 800 replications, ~76
     clones each): estimate matches the oracle gradient `[10.727, 3.568]` at
-    `z = [1.18, 0.32]`, and agrees with this package's score estimator at
-    pooled `z = [1.40, 0.49]`.
+    `z = [1.01, 0.04]` through the ChronoSim adapter and `z = [0.46, 0.26]`
+    through the ChronoSim-free branchable test world, and agrees with this
+    package's score estimator at pooled `z = [1.24, 0.22]`.
 
 The operational rule: the score column is always safe; the IPA columns are
 where the variance winnings are; and the [pairing](choosing.md) is how a
@@ -185,6 +186,36 @@ derivative estimate. It also justifies the control variate: subtracting the
 in-sample mean of `f` from the functional multiplies a mean-zero quantity,
 leaving the estimator unbiased while cutting its variance by orders of
 magnitude on functionals with a large mean.
+
+## Obligations of a branchable world
+
+The branching estimator drives a live world through the nine-verb
+[branchable-world interface](branchable.md), and its correctness leans on
+semantic obligations that no method signature expresses. They are stated in
+full in the verbs' docstrings and exercised by [`check_branchable`](@ref);
+the three that silently corrupt estimates when violated:
+
+  * **Peeking is non-committing and repeatable.** Two consecutive
+    [`branch_peek`](@ref) calls with no intervening mutation return the same
+    `(time, key)` and leave the world's future unchanged — the estimator
+    peeks every race before deciding whether to branch, and a mutating peek
+    would advance the base path invisibly.
+  * **Enabled ages come back sorted by key.** The Hahn–Jordan probability
+    vectors are built in [`branch_enabled_ages`](@ref) order and the drawn
+    winners are indexed back into it, so a nondeterministic order
+    desynchronizes the forced clone from the pmf that chose it.
+  * **Coupled-clone and rekey semantics.** [`branch_clone`](@ref) is a
+    coupled copy (identical continuation until rekeyed, no perturbation of
+    the original); [`branch_rekey!`](@ref) gives FRESH randomness including a
+    redraw of already-scheduled firings (a resample at a stopping time, so
+    the law is unchanged), with same-seed rekeys of two clones coupling them
+    to each other. Re-seeding streams without redrawing scheduled clocks
+    breaks replication independence: every replication would replay the
+    factory world's opening firings.
+
+`check_branchable` returns per-obligation booleans with diagnostics rather
+than throwing, and the suite keeps negative controls (a mutating peek, an
+unsorted age table) proving each check has teeth.
 
 ## Obligations inherited from the model contract
 
