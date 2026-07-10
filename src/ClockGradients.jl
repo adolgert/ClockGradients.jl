@@ -66,6 +66,10 @@ export replay_times, ipa_gradient, ipa_estimate, ipa_simulate_and_estimate
 # The score/IPA pairing verdict.
 export PairedGradient, paired_estimate, paired_simulate_and_estimate
 
+# The weak-derivative branching estimator. The generic function is declared in
+# the core; its working method is added by the ChronoSim package extension.
+export branching_gradient
+
 include("hazards.jl")
 include("model.jl")
 include("records.jl")
@@ -73,5 +77,6 @@ include("functionals.jl")
 include("score.jl")
 include("ipa.jl")
 include("pairing.jl")
+include("branching_api.jl")
 
 end # module ClockGradients
