@@ -6,22 +6,23 @@ sampler package's trajectory records (the retained-draw identity is the seam)
 and turns them into Monte Carlo estimates of `∂θ E[f(X_θ)]` for a
 generalized-semi-Markov process (GSMP) model.
 
-Milestone CG-M1 ships the score-function (likelihood-ratio) estimator, running
-entirely off a `CompetingClocks.TrajectoryRecorder` record, reproducing the
-`WorldTimer/src/RecorderScore` prototype's machine-repair numbers through a
-standalone package API. The record machinery (`GradientRecord`, `Bookkeeper`),
-the model contract, the hazard helpers, and the functional layer are built
-generic from day one so that the pathwise/IPA estimator (CG-M2) and mid-flight
-re-evaluation (CG-M3) plug into the same records without an API change.
-
-The estimator identity is the score-function (likelihood-ratio) form
+The package holds three estimator families over one shared record and model
+contract. The score-function (likelihood-ratio) estimator uses
 
     ∂θ E[f(X)] = E[f(X) ⋅ ∂θ log L(X; θ)],
 
 with the trajectory held fixed and θ entering only through the model's
-`clock_distribution`. Forward-mode automatic differentiation (`ForwardDiff`)
-carries `∂θ log L` through a pure replay of the recorded firing sequence; the
+`clock_distribution`; forward-mode automatic differentiation (`ForwardDiff`)
+carries `∂θ log L` through a pure replay of the recorded firing sequence — the
 sampler never participates in the differentiation, it only produced the record.
+The pathwise/IPA estimator instead freezes the retained uniforms and the event
+order and differentiates the replayed firing times themselves (`replay_times`,
+`ipa_gradient`), including through mid-flight re-evaluation chains under the
+`:carry`/`:redraw` coupling labels. `paired_estimate` runs both on the same
+records and turns their disagreement into a bias verdict. The weak-derivative
+branching estimator (`branching_gradient`) recovers event-order sensitivity by
+cloning a live `ChronoSim` simulation; its working method loads through the
+ClockGradients–ChronoSim package extension.
 
 Design findings this package exists to extract are recorded in the WorldTimer
 `knowledge/` notes; the code favors concrete clock-key types `K`, flat typed

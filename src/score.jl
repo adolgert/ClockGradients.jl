@@ -200,9 +200,12 @@ Convenience driver: run `nreps` trajectories of `model` at `θ` through the real
 and hand them to `score_estimate`. Returns the same `NamedTuple` as
 `score_estimate`.
 
-The default `coupling = :redraw` is a stored label only in v0 (no mid-flight
-re-evaluation yet), so it does not change the score numbers; it is threaded
-through so the records are already tagged for the CG-M2/CG-M3 replays.
+The score numbers do not depend on `coupling` (the likelihood replay never
+reads the retained uniforms), and for the records this driver builds the label
+is also replay-equivalent: `run_recorded` never re-evaluates a live clock, so
+every chain is a single segment and the carry and redraw replays coincide. The
+label matters once the same records feed a pathwise replay of a genuinely
+re-evaluated model — see `GradientRecord`.
 """
 function simulate_and_estimate(rng::AbstractRNG, model, θ::AbstractVector, method,
                                fn::PathFunctional; nreps::Integer, horizon::Real,
