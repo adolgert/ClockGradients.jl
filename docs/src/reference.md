@@ -130,3 +130,18 @@ a `(sim_factory, initializer)` pair.
 ```@docs
 branching_gradient
 ```
+
+## The SPA estimator
+
+Smoothed perturbation analysis: the IPA term plus hazard-weighted boundary
+terms at event-order swaps and at the horizon, with jumps from coupled clone
+pairs. The extension adds the convenience method taking a
+`(sim_factory, initializer, model, θ, fn)` tuple, where `model` is the pure
+twin of the simulated law.
+
+```@docs
+spa_gradient
+ClockGradients.WeightStrategy
+HazardWeight
+TruncatedHazard
+```

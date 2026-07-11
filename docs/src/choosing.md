@@ -203,6 +203,57 @@ through the ChronoSim adapter and at `z = [0.46, 0.26]` through the
 ChronoSim-free test world, and agreed with this package's own score estimator
 on the same model at pooled `z = [1.24, 0.22]`.
 
+## The SPA estimator: the sharper event-order tool
+
+Smoothed perturbation analysis ([`spa_gradient`](@ref), Fu & Hu 1997) targets
+the same regime as branching — derivatives carried by event ORDER — but
+conditions instead of splitting. Its estimate is the pathwise (IPA) term plus
+a boundary term: at each event, every enabled non-winner contributes its
+hazard at its age, times a one-sided crossing rate (how fast the order swap
+approaches as θ moves), times the jump the swap would cause in the functional,
+estimated by one coupled clone pair fired in the two orders with the holding
+time between them vanishing. A second boundary term at the horizon covers
+clocks crossing INTO a finite observation window — on a pure Poisson counting
+process, where no order swap is even possible, that term alone reproduces
+`dE[N(T)]/dλ = T` exactly on every path.
+
+Two properties keep its clone budget below branching's. A *criticality gate*
+proves most swaps can't change the functional — two speculative calls of the
+pure `fire` decide whether the pair's two orders re-coalesce (for a first
+passage, the gate also compares the intermediate states through the
+predicate) — and proven-zero jumps spawn no clones. And each clone pair is
+weighted by a realized hazard rather than a Hahn–Jordan mass, which measured
+≈5× tighter in variance×time than [`branching_gradient`](@ref) at comparable
+clone budgets on the machine-repair count.
+
+*Needs:* everything branching needs (a live branchable world), PLUS a pure
+model twin — the estimator replays records and calls `fire` speculatively, so
+the model handed to it must be the exact five-function twin of the law the
+world simulates (for a [`ClockWorld`](@ref) they are the same object; through
+the ChronoSim extension the twin is written by hand, and a per-epoch audit
+throws if its enabled set ever disagrees with the live world's). States must
+compare by value (`==`), clock families must be dual-safe, and a model whose
+enabled clocks are re-evaluated mid-flight is refused with a named error —
+that regime's boundary weight is not yet derived.
+
+*Measured:* machine-repair terminal failure count `z = [−0.55, −0.26]`
+against the CTMC oracle where IPA is pinned zero; first passage to a contended
+threshold `z = [−0.75, −0.25]` where IPA's repair component has the WRONG
+SIGN (−0.24 against a true +0.93); the ≈5× variance×time advantage over
+branching above. The single-pair `TruncatedHazard()` strategy (requires the
+optional [`branch_schedule`](@ref) verb) uses ≈6× fewer clones at a wider
+standard error — a wall-clock tradeoff, not a dominance.
+
+On the race from the pairing example — the functional the pairing flagged —
+SPA recovers the `2/9` that IPA zeroed, through the packaged
+[`ClockWorld`](@ref) with the model itself as its own twin:
+
+```@example pairingdemo
+spa = spa_gradient(() -> ClockWorld(ExpRace(), θ; seed=1), ExpRace(), θ, awins;
+                   nreps=4_000, horizon=100.0, seed=42)
+(estimate = spa.estimate, stderr = spa.stderr, ipa_part = spa.ipa_part)
+```
+
 ## The decision, in short
 
 1. Simulate once, record, and run [`paired_estimate`](@ref) — one extra
@@ -212,6 +263,10 @@ on the same model at pooled `z = [1.24, 0.22]`.
 3. Flag: report the score estimate. If the functional is order-sensitive and
    the score's variance is unacceptable, and the model exists as a live
    [branchable world](branchable.md) — a ChronoSim simulation via the
-   extension, or any conforming framework — use [`branching_gradient`](@ref).
+   extension, or any conforming framework — use [`spa_gradient`](@ref) when
+   its requirements hold (pure twin, value-`==` states, no mid-flight
+   re-evaluation), and [`branching_gradient`](@ref) otherwise: branching
+   needs no replay, so it also covers clock families and couplings the
+   pathwise machinery cannot.
 4. Consult the [validity table](invariants.md) before trusting any unpaired
    pathwise number.

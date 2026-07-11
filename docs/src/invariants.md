@@ -22,12 +22,17 @@ retained random draws are held fixed while `θ` moves; `:carry` retains each
 clock's enabling draw and preserves its age through re-evaluations, `:redraw`
 retains the last conditional draw (see [Records and ingestion](records.md)).
 
-| Functional class | Score | IPA, `:carry` record | IPA, `:redraw` record | Branching |
-|:---|:---|:---|:---|:---|
-| Integrated occupancy `∫₀ᵀ g(x_t) dt` | unbiased | **exact** | biased toward zero when re-evaluations occur | not needed (v0 API is terminal-state) |
-| Terminal discrete observable (counts, indicators) | unbiased | identically zero — 100% bias, zero variance | identically zero | **unbiased** |
-| First passage, hitting event order-stable | unbiased | **exact** (per-path) | exact absent re-evaluations | v0 API is terminal-state |
-| First passage, hitting event contended | unbiased | **wrong sign** | wrong sign | v0 API is terminal-state |
+| Functional class | Score | IPA, `:carry` record | IPA, `:redraw` record | Branching | SPA |
+|:---|:---|:---|:---|:---|:---|
+| Integrated occupancy `∫₀ᵀ g(x_t) dt` | unbiased | **exact** | biased toward zero when re-evaluations occur | not needed (API is terminal-state) | valid; reduces to its IPA term |
+| Terminal discrete observable (counts, indicators) | unbiased | identically zero — 100% bias, zero variance | identically zero | **unbiased** | **unbiased**, ≈5× tighter × time than branching |
+| First passage, hitting event order-stable | unbiased | **exact** (per-path) | exact absent re-evaluations | API is terminal-state | valid; boundary term near zero |
+| First passage, hitting event contended | unbiased | **wrong sign** | wrong sign | API is terminal-state | **unbiased**; recovers the sign |
+
+SPA's cells hold only inside its stated requirements (see
+[its obligations below](#Obligations-of-the-SPA-estimator)): no mid-flight
+re-evaluation (guarded by a named error), a pure model twin, value-`==`
+states, dual-safe clock families.
 
 The measured evidence behind each row, from this package's test suite (fixed
 seeds; oracles are exact continuous-time-Markov-chain (CTMC)
@@ -62,6 +67,23 @@ pairing's four-standard-error test fired):
     `z = [1.01, 0.04]` through the ChronoSim adapter and `z = [0.46, 0.26]`
     through the ChronoSim-free branchable test world, and agrees with this
     package's score estimator at pooled `z = [1.24, 0.22]`.
+  * *Terminal count via SPA* (same regime, 1,500 replications): matches the
+    oracle at `z = [-0.55, -0.26]` with a standard error 2.2–2.5× smaller
+    than branching's at a comparable clone budget (the ≈5× variance×time
+    advantage); the criticality gate skipped ~51% of candidate swaps without
+    clones. Through the ChronoSim adapter with a hand-written pure twin, both
+    weight strategies match the same oracle.
+  * *Contended first passage via SPA* (plain machine repair, first time three
+    machines are down, 2,000 replications): oracle `[-8.13, +0.93]`; SPA
+    `z = [-0.75, -0.25]` while its own frozen-order IPA part reports the
+    wrong-signed `-0.24` on the repair rate — the boundary term restores the
+    sign. The gate's first-passage form compares the swap's INTERMEDIATE
+    states through the predicate; gating on state re-coalescence alone
+    erases this entire correction.
+  * *The horizon boundary term* (Poisson counting process, `T = 3`): with no
+    order-swap candidates in existence, SPA reproduces `dE[N(T)]/dλ = T`
+    exactly on every path (standard error at round-off) — the pin that
+    finite-window counting needs the horizon term, not only swap terms.
 
 The operational rule: the score column is always safe; the IPA columns are
 where the variance winnings are; and the [pairing](choosing.md) is how a
@@ -215,7 +237,35 @@ the three that silently corrupt estimates when violated:
 
 `check_branchable` returns per-obligation booleans with diagnostics rather
 than throwing, and the suite keeps negative controls (a mutating peek, an
-unsorted age table) proving each check has teeth.
+unsorted age table) proving each check has teeth. The OPTIONAL tenth verb
+[`branch_schedule`](@ref) is checked only when implemented (sorted by time,
+keys exactly the enabled set, first entry agreeing with the peek); its
+absence is conforming and reported as `schedule_verb = :absent`.
+
+## Obligations of the SPA estimator
+
+[`spa_gradient`](@ref) adds four requirements beyond the branchable world,
+each enforced or stated:
+
+  * **A pure model twin.** The estimator's state logic — records, replay,
+    criticality gates, jump construction, horizon terms — runs entirely on
+    the five-function model, never on the live world's state object. The
+    model handed in must be the exact twin of the law the world simulates; a
+    per-epoch audit compares the twin's enabled set against the world's and
+    throws a named error at the first disagreement.
+  * **Value equality of states.** The criticality gate decides zero jumps by
+    comparing states after firing a pair in both orders; a state type whose
+    `==` is identity (the default for structs with array fields) silently
+    disables the gate — unbiased but clone-wasteful. Define `==` fieldwise.
+  * **No mid-flight re-evaluation.** The boundary weight for a clock whose
+    distribution was re-evaluated while enabled (its last-segment conditional
+    law) has not been derived; a trajectory record carrying a multi-segment
+    chain throws a named `ArgumentError` rather than average a wrong weight.
+  * **The tie construction.** The DNP/PP jump pair fires two events at one
+    instant through [`branch_force!`](@ref); the regime is documented on the
+    CompetingClocks contract page (the second force elapses zero time and
+    triggers no keep-if-later redraw), and the exponential-race test pins the
+    constructed jump at exactly the analytic ±1.
 
 ## Obligations inherited from the model contract
 
