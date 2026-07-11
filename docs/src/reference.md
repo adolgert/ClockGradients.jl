@@ -105,6 +105,15 @@ branch_state
 check_branchable
 ```
 
+## The packaged world
+
+A minimal simulation runner implementing every verb, so a pure five-function
+model runs the clone-based estimators without a simulation framework.
+
+```@docs
+ClockWorld
+```
+
 ## The branching estimator
 
 The estimator lives in the core package, written only against the protocol

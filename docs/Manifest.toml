@@ -1,6 +1,6 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.12.5"
+julia_version = "1.12.6"
 manifest_format = "2.0"
 project_hash = "677169f3848ad17c75d1204872aef4503eb02b26"
 
@@ -64,7 +64,7 @@ version = "0.1.0-DEV"
 
 [[deps.ClockGradients]]
 deps = ["CompetingClocks", "Distributions", "ForwardDiff", "Random", "Statistics"]
-path = ".."
+path = "/home/adolgert/dev/WorldTimer/ClockGradients.jl"
 uuid = "4ce9755b-dddc-4f69-a7df-9a3441b90f10"
 version = "0.1.0-DEV"
 weakdeps = ["ChronoSim"]

@@ -66,14 +66,34 @@ four-argument `enable` seam). The extension also keeps the CG-M4 calling
 convention `branching_gradient(sim_factory, initializer, θ, f_state; ...)`
 working: it wraps the pair into a conforming world factory and forwards.
 
+## A ready-made world: `ClockWorld`
+
+Most users never need to implement the verbs. The package ships
+[`ClockWorld`](@ref), a minimal simulation runner (model-contract state +
+`CombinedNextReaction` sampler + current time) that implements every verb, so
+any pure five-function model runs the clone-based estimators with one
+constructor:
+
+```julia
+w = ClockWorld(model, θ; seed=1)                       # a ready-to-peek world
+branching_gradient(() -> ClockWorld(model, θ; seed=1), θ, f_state;
+                   nreps=2000, horizon=8.0, seed=42, branch_rng_seed=43)
+```
+
+Its one limitation is stated on the type: clock distributions are frozen at
+enabling, so it is exact only for models whose enabled clocks' laws cannot
+change while the clock stays enabled. A framework world (the ChronoSim
+extension) re-evaluates mid-flight.
+
 ## Adopting the protocol: a world with no framework at all
 
 The proof that the protocol suffices is a world built straight on the raw
 sampler layer — the stand-in for, say, a queueing package that has never heard
 of ChronoSim. The state is a model-contract state (immutable, copied on
 `fire`), the clocks live in a `CombinedNextReaction`, and each verb is a few
-lines. This is a compact version of `test/toyworld.jl`, whose full form drives
-the machine-repair CTMC-oracle test below.
+lines. This is a compact version of the packaged `ClockWorld`
+(`src/clockworld.jl`), whose full form drives the machine-repair CTMC-oracle
+test in the test suite.
 
 ```@example branchable
 using ClockGradients
@@ -197,8 +217,9 @@ res = branching_gradient(() -> MiniWorld(θ; seed=1), θ,
 ```
 
 The package's exit criterion for this interface is the same run at full
-strength on the five-machine model: `test/toyworld.jl` implements these verbs
-over the shared machine-repair fixture, and at 800 replications the estimate
+strength on the five-machine model: the packaged [`ClockWorld`](@ref)
+implements these verbs over the shared machine-repair fixture, and at 800
+replications the estimate
 `[11.04 ± 0.68, 3.62 ± 0.18]` matches the differentiated CTMC oracle
 `[10.727, 3.568]` at `z = [0.46, 0.26]` — the branching estimator reproducing
 its oracle through a world that has never heard of ChronoSim, which is the

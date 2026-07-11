@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------------------
 # The branchable-world protocol: conformance of both implementations, the
-# ToyWorld proof that branching needs no ChronoSim, negative controls that the
+# ClockWorld proof that branching needs no ChronoSim, negative controls that the
 # conformance harness has teeth, and the structural pin that the core source
 # never names a framework.
 #
@@ -8,7 +8,7 @@
 # fixtures back the ChronoSim-adapter conformance check.
 # ---------------------------------------------------------------------------
 
-using .ToyWorlds: ToyWorld
+using ClockGradients: ClockWorld
 using ClockGradients: check_branchable
 
 # The same machine-repair regime as everywhere else: n=5, λ=0.5, μ=1.5, T=8.
@@ -16,12 +16,12 @@ const _BW_θ = [0.5, 1.5]
 const _BW_T = 8.0
 const _BW_N = 5
 
-toy_factory() = ToyWorld(MachineRepair(_BW_N), _BW_θ; seed=1)
+toy_factory() = ClockWorld(MachineRepair(_BW_N), _BW_θ; seed=1)
 
-testset_if("branchable: the ToyWorld built on the raw CompetingClocks sampler passes every conformance obligation of the protocol") do
+testset_if("branchable: the packaged ClockWorld built on the raw CompetingClocks sampler passes every conformance obligation of the protocol") do
     rep = check_branchable(toy_factory, _BW_θ; nsteps=20, seed=0xBEEF)
     for msg in rep.diagnostics
-        @info "toyworld conformance diagnostic" msg
+        @info "clockworld conformance diagnostic" msg
     end
     @test rep.peek_repeatable
     @test rep.peek_commit_progress
@@ -51,7 +51,7 @@ testset_if("branchable: a ChronoSim SimulationFSM through the extension adapter 
     @test rep.pass
 end
 
-testset_if("branchable: branching_gradient through the ToyWorld — a world that has never heard of ChronoSim — matches the differentiated CTMC oracle on both components") do
+testset_if("branchable: branching_gradient through the ClockWorld — a world that has never heard of ChronoSim — matches the differentiated CTMC oracle on both components") do
     # THE PROOF of the refactor: the estimator moved to the core is driven by a
     # second, independent implementation of the nine verbs, built straight on
     # the raw sampler layer, and must reproduce the same oracle the ChronoSim

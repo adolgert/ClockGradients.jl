@@ -26,7 +26,6 @@ end
 include("machinerepair.jl")
 include("races.jl")
 include("loadrepair.jl")
-include("toyworld.jl")
 
 include("test_hazards.jl")
 include("test_records.jl")

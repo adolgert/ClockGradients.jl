@@ -79,6 +79,11 @@ export check_branchable
 # The weak-derivative branching estimator, written against the protocol.
 export branching_gradient
 
+# The packaged branchable world: a minimal simulation runner so any pure
+# model-contract model can be driven by the clone-based estimators without a
+# simulation framework.
+export ClockWorld
+
 include("hazards.jl")
 include("model.jl")
 include("records.jl")
@@ -89,5 +94,6 @@ include("pairing.jl")
 include("branchable.jl")
 include("branching.jl")
 include("conformance.jl")
+include("clockworld.jl")
 
 end # module ClockGradients
