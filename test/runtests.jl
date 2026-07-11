@@ -4,6 +4,7 @@ using CompetingClocks: FirstReactionMethod, NextReactionMethod, recorded_firings
     close_record!, TrajectoryRecorder
 using Distributions
 using ForwardDiff
+using LinearAlgebra: LinearAlgebra   # dense \ behind the first-passage oracle
 using Random
 using Statistics
 
@@ -36,3 +37,4 @@ include("test_pairing.jl")
 include("test_chains.jl")
 include("test_branching.jl")
 include("test_branchable.jl")
+include("test_spa.jl")

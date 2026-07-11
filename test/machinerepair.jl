@@ -173,3 +173,51 @@ function expected_downtime_ctmc(λ, μ, n::Integer, T::Real; nsteps::Integer=400
     end
     y[n + 2]
 end
+
+# Value equality for the SPA criticality gate: the commuting check compares
+# states after firing a pair in both orders, and the default == on a struct
+# with Vector fields is identity, which would silently disable the gate
+# (treating every pair as non-commuting — unbiased but clone-wasteful).
+Base.:(==)(a::MachineRepairState, b::MachineRepairState) =
+    a.up == b.up && a.queue == b.queue && a.nfail == b.nfail
+
+"""
+    machine_repair_fpt_ctmc(λ, μ, n, m) -> mean first-passage time
+
+Exact `E[inf{t : #down(t) ≥ m}]` for the plain machine-repair fleet started
+all-up: the down-count is a birth-death chain (birth `(n−k)λ`, death
+`μ·1(k>0)`), so the mean hitting time solves `(−Q_tt) w = 1` over the
+transient states `k = 0..m−1` and `w[1]` is the answer. Generic in the
+parameter eltype so `ForwardDiff.gradient` flows through the dense solve —
+the same pattern as `loadrepair_fpt_ctmc` with the load factor removed.
+"""
+function machine_repair_fpt_ctmc(λ, μ, n::Integer, m::Integer)
+    1 <= m <= n || throw(ArgumentError("threshold m must satisfy 1 ≤ m ≤ n"))
+    S = promote_type(typeof(λ), typeof(μ))
+    A = zeros(S, m, m)          # A = −Q over transient states k = 0..m−1
+    for k in 0:(m - 1)
+        birth = (n - k) * λ
+        death = k > 0 ? S(μ) : zero(S)
+        A[k + 1, k + 1] = birth + death
+        k + 1 <= m - 1 && (A[k + 1, k + 2] = -birth)
+        k > 0 && (A[k + 1, k] = -death)
+    end
+    w = A \ ones(S, m)
+    w[1]
+end
+
+machine_repair_fpt_gradient(λ, μ, n::Integer, m::Integer) =
+    ForwardDiff.gradient(θg -> machine_repair_fpt_ctmc(θg[1], θg[2], n, m), [λ, μ])
+
+# --- Poisson counting process: one clock, rate λ = θ[1]; state is the count.
+# The fixture that isolates SPA's HORIZON boundary term: there are no
+# order-swap candidates at all (a clock cannot swap with its own next
+# occurrence), yet dE[N(T)]/dλ = T, carried entirely by arrivals crossing the
+# horizon.
+struct PoissonCount end
+initial_state(::PoissonCount) = 0
+clockkeytype(::PoissonCount) = Symbol
+enabled(::PoissonCount, s::Int) = Symbol[:arrive]
+clock_distribution(::PoissonCount, θ, key::Symbol) =
+    Exponential(one(eltype(θ)) / θ[1])
+fire(::PoissonCount, s::Int, key::Symbol) = s + 1

@@ -39,7 +39,7 @@ using CompetingClocks: SamplingContext, SamplerBuilder,
     with_recorder, close_record!, recorded_firings,
     TrajectoryRecorder, ClockFiredRecord
 using Distributions: UnivariateDistribution, Exponential, Weibull, LogNormal,
-    logpdf, logccdf, invlogccdf, partype
+    logpdf, logccdf, invlogccdf, partype, pdf, cdf, ccdf
 using ForwardDiff: ForwardDiff
 using Random: AbstractRNG, Xoshiro
 using Statistics: mean, std
@@ -87,6 +87,9 @@ export branching_gradient
 # simulation framework.
 export ClockWorld
 
+# The smoothed-perturbation-analysis (SPA) estimator and its weight strategies.
+export spa_gradient, HazardWeight, TruncatedHazard
+
 include("hazards.jl")
 include("model.jl")
 include("records.jl")
@@ -98,5 +101,6 @@ include("branchable.jl")
 include("branching.jl")
 include("conformance.jl")
 include("clockworld.jl")
+include("spa.jl")
 
 end # module ClockGradients

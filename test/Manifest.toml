@@ -1,8 +1,8 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.12.5"
+julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "4b91d85e8ccd057f12fc2900d3956225f181a5a5"
+project_hash = "665220d55e50b6153f4d8fbb57455944219fa3c1"
 
 [[deps.Accessors]]
 deps = ["CompositionsBase", "ConstructionBase", "Dates", "InverseFunctions", "MacroTools"]
@@ -73,7 +73,7 @@ version = "0.3.1"
 deps = ["DataStructures", "Distributions", "Logging", "Random"]
 path = "../../CompetingClocks.jl"
 uuid = "5bb9b785-358c-4fee-af0f-b94a146244a8"
-version = "0.4.0"
+version = "0.4.1"
 weakdeps = ["ForwardDiff"]
 
     [deps.CompetingClocks.extensions]
