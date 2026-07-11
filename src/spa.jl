@@ -133,16 +133,21 @@ function _spa_run_collect!(w, horizon::Float64, K::Type)
     (ks, ts)
 end
 
-# Drive a clone until the first-passage predicate holds; NaN when the enabled
-# set empties or the step budget runs out (a censored jump, reported upward).
-function _spa_run_to_hit!(w, pred, budget::Int)
+# Drive a clone until the first-passage predicate holds, FOLDING THE TWIN
+# STATE: the predicate is written against the pure model's state type, and a
+# framework world's live state is a different type entirely, so the estimator
+# never reads `branch_state` — the live world contributes only keys, times,
+# clones, and streams. NaN when the enabled set empties or the step budget
+# runs out (a censored jump, reported upward).
+function _spa_run_to_hit!(w, model, s_twin, pred, budget::Int)
     steps = 0
     while steps < budget
         pk = branch_peek(w)
         pk === nothing && return NaN
         (t, key) = pk
         branch_commit!(w, key, t)
-        pred(branch_state(w)) && return t
+        s_twin = fire(model, s_twin, key)
+        pred(s_twin) && return t
         steps += 1
     end
     return NaN
@@ -156,8 +161,8 @@ end
 # functional layer already spans terminal/integral/first-passage; only the
 # branching estimator's driver reads terminal state alone. NaN = censored
 # first passage.
-function _spa_forced_value(fn::PathFunctional, model, preclone, first_key, second_key,
-                           tk::Float64, seed::UInt64,
+function _spa_forced_value(fn::PathFunctional, model, s_pre, preclone, first_key,
+                           second_key, tk::Float64, seed::UInt64,
                            prefix_keys::Vector, prefix_times::Vector{Float64},
                            horizon::Float64, fpt_budget::Int)
     cl = branch_clone(preclone)
@@ -166,17 +171,19 @@ function _spa_forced_value(fn::PathFunctional, model, preclone, first_key, secon
     forced_keys = K[first_key]
     forced_times = Float64[tk]
     branch_force!(cl, first_key, tk)
+    s_twin = fire(model, s_pre, first_key)
     # A first passage hit by the FIRST forced firing is decided at tk whatever
     # the second firing does (first hit, not last), so check between forces.
-    fn isa FirstPassageTime && fn.pred(branch_state(cl)) && return tk
-    if second_key in enabled(model, branch_state(cl))
+    fn isa FirstPassageTime && fn.pred(s_twin) && return tk
+    if second_key in enabled(model, s_twin)
         branch_force!(cl, second_key, tk)
         push!(forced_keys, second_key)
         push!(forced_times, tk)
+        s_twin = fire(model, s_twin, second_key)
     end
     if fn isa FirstPassageTime
-        fn.pred(branch_state(cl)) && return tk
-        return _spa_run_to_hit!(cl, fn.pred, fpt_budget)
+        fn.pred(s_twin) && return tk
+        return _spa_run_to_hit!(cl, model, s_twin, fn.pred, fpt_budget)
     end
     (ck, ct) = _spa_run_collect!(cl, horizon, K)
     keys_full = vcat(prefix_keys, forced_keys, ck)
@@ -186,15 +193,16 @@ function _spa_forced_value(fn::PathFunctional, model, preclone, first_key, secon
 end
 
 # One coupled clone-pair estimate of L(PP) − L(DNP) for (winner ekey,
-# candidate ckey) at decision time tk. NaN when either side censored.
-function _spa_clone_jump(fn::PathFunctional, model, preclone, ekey, ckey, tk::Float64,
-                         est_rng::AbstractRNG, prefix_keys::Vector,
+# candidate ckey) at decision time tk, from the twin pre-state s_pre. NaN when
+# either side censored.
+function _spa_clone_jump(fn::PathFunctional, model, s_pre, preclone, ekey, ckey,
+                         tk::Float64, est_rng::AbstractRNG, prefix_keys::Vector,
                          prefix_times::Vector{Float64}, horizon::Float64,
                          fpt_budget::Int)
     seedk = rand(est_rng, UInt64)
-    l_dnp = _spa_forced_value(fn, model, preclone, ekey, ckey, tk, seedk,
+    l_dnp = _spa_forced_value(fn, model, s_pre, preclone, ekey, ckey, tk, seedk,
                               prefix_keys, prefix_times, horizon, fpt_budget)
-    l_pp = _spa_forced_value(fn, model, preclone, ckey, ekey, tk, seedk,
+    l_pp = _spa_forced_value(fn, model, s_pre, preclone, ckey, ekey, tk, seedk,
                              prefix_keys, prefix_times, horizon, fpt_budget)
     return l_pp - l_dnp
 end
@@ -321,6 +329,12 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
     nskip = 0
     nclones = 0
     hit_already = fn isa FirstPassageTime && fn.pred(s0)
+    # The folded twin state. Every state-reading computation (gates, jumps,
+    # horizon terms, first-passage predicates) uses this fold, never the live
+    # world's state object: a framework world's state is a different type from
+    # the pure model's, and the estimator's whole state logic lives in the
+    # model. The live world contributes keys, times, clones, and streams.
+    s_twin = s0
 
     while true
         pk = branch_peek(w)
@@ -328,7 +342,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
         (tk, ekey) = pk
         tk <= horizon || break
         k = length(keys_tr) + 1
-        s_pre = branch_state(w)
+        s_pre = s_twin
         tnow = branch_time(w)
         agepairs = branch_enabled_ages(w)
         _spa_twin_audit(enabled_at, agepairs, k)
@@ -343,7 +357,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
             else
                 preclone === nothing && (preclone = branch_clone(w))
                 nclones += 2
-                _spa_clone_jump(fn, model, preclone, ekey, ckey, tk, est_rng,
+                _spa_clone_jump(fn, model, s_pre, preclone, ekey, ckey, tk, est_rng,
                                 keys_tr, times_tr, horizon, fpt_budget)
             end
         end
@@ -387,8 +401,8 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
 
         push!(keys_tr, ekey)
         push!(times_tr, tk)
-        _spa_update_enabled!(enabled_at, enab_state, model, s_pre, ekey, k)
-        if fn isa FirstPassageTime && !hit_already && fn.pred(branch_state(w))
+        s_twin = _spa_update_enabled!(enabled_at, enab_state, model, s_pre, ekey, k)
+        if fn isa FirstPassageTime && !hit_already && fn.pred(s_twin)
             hit_already = true
             break   # the record past the hit carries no more information
         end
@@ -401,7 +415,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
     # Horizon candidates: every clock still enabled at T can cross into the
     # window. Deterministic jumps, no clones, strategy-independent.
     if isfinite(horizon) && !(fn isa FirstPassageTime)
-        s_end = branch_state(w)
+        s_end = s_twin
         tend = branch_time(w)
         for (kk, age) in branch_enabled_ages(w)
             hj = _horizon_jump(fn, model, s_end, kk)

@@ -34,7 +34,8 @@
 
 module ClockGradientsChronoSimExt
 
-using ClockGradients: ClockGradients, branching_gradient,
+using ClockGradients: ClockGradients, branching_gradient, spa_gradient,
+    PathFunctional,
     branch_peek, branch_commit!, branch_force!, branch_clone, branch_rekey!,
     branch_time, branch_enabled_ages, branch_clock_distribution, branch_state,
     branch_schedule
@@ -139,6 +140,21 @@ function ClockGradients.branching_gradient(sim_factory::Function, initializer,
         return sim
     end
     return branching_gradient(world_factory, θ, f_state; kwargs...)
+end
+
+# The SPA analogue of the convenience method. `model` is the PURE
+# model-contract twin of the law the simulation implements: the estimator's
+# state logic (records, replay, gates, jumps) runs on the twin, the live sim
+# contributes keys, times, clones, and streams, and a per-epoch audit throws
+# if the twin's enabled set ever disagrees with the sim's.
+function ClockGradients.spa_gradient(sim_factory::Function, initializer, model,
+        θ::AbstractVector, fn::PathFunctional; kwargs...)
+    world_factory = function ()
+        sim = sim_factory()
+        ChronoSim.initialize!(InitializeEvent(), initializer, sim)
+        return sim
+    end
+    return spa_gradient(world_factory, model, θ, fn; kwargs...)
 end
 
 end # module ClockGradientsChronoSimExt
