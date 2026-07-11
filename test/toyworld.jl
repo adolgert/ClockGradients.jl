@@ -20,7 +20,7 @@
 module ToyWorlds
 
 using CompetingClocks: CombinedNextReaction, enable!, disable!, fire!, next,
-    clone, rekey_streams!, reenable!, force_fire!, enabled_ages
+    clone, rekey_streams!, jitter!, force_fire!, enabled_ages
 using ClockGradients: initial_state, clockkeytype, enabled, clock_distribution, fire
 import ClockGradients: branch_peek, branch_commit!, branch_force!, branch_clone,
     branch_rekey!, branch_time, branch_enabled_ages, branch_clock_distribution,
@@ -107,16 +107,16 @@ branch_clone(w::ToyWorld{M,St,K}) where {M,St,K} =
 
 # Fresh randomness = new stream seed AND a resample of every scheduled clock at
 # the current time (rekey_streams! alone would leave the cached putative times
-# replaying the old draws). reenable!(..., :redraw) discards each clock's
-# retained draw and redraws its remaining lifetime from the freshly-keyed
-# per-clock stream, conditioned on the clock's age — a resample at a stopping
-# time, so the law is unchanged and same-seed rekeys stay coupled to each other.
+# replaying the old draws). jitter! is the divergence primitive for that: it
+# discards each scheduled clock's retained draw and redraws its remaining
+# lifetime from the freshly-keyed per-clock stream, conditioned on the clock's
+# age, using the clock's stored distribution — a resample at a stopping time,
+# so the law is unchanged and same-seed rekeys stay coupled to each other. It
+# also clears CombinedNextReaction's retained-disabled survival banks, residual
+# randomness an enabled-only sweep could not reach.
 function branch_rekey!(w::ToyWorld, seed)
     rekey_streams!(w.sampler, UInt64(seed))
-    for (k, age) in enabled_ages(w.sampler, w.time)
-        reenable!(w.sampler, k, clock_distribution(w.model, w.θ, k, w.state),
-                  w.time - age, w.time, :redraw)
-    end
+    jitter!(w.sampler, w.time)
     return w
 end
 

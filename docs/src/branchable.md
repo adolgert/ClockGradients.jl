@@ -50,13 +50,18 @@ Two obligations deserve emphasis because naive implementations violate them:
     replication's factory world, and without the redraw every replication
     would share the factory's opening firings. The redraw is a resample at a
     stopping time (each clock's remaining lifetime, conditioned on its age),
-    so the trajectory law is untouched; `CompetingClocks.reenable!` with the
-    `:redraw` coupling is exactly this operation.
+    so the trajectory law is untouched. `CompetingClocks.jitter!` is exactly
+    this operation: it redraws every scheduled entry from its own freshly-keyed
+    stream using the clock's stored distribution, and on `CombinedNextReaction`
+    it also extinguishes the retained-disabled survival banks, residual
+    randomness that a sweep over the enabled clocks alone could not reach. It
+    is the same primitive CompetingClocks' own `split!` pairs with
+    `rekey_streams!`.
 
 ChronoSim's `SimulationFSM` conforms through the ClockGradients–ChronoSim
 package extension, which maps each verb onto a public ChronoSim or
 CompetingClocks capability (`next`, `fire!`, `force_fire!`, `clone`,
-`rekey_streams!` plus the redraw sweep, `enabled_ages`, and the model's
+`rekey_streams!` paired with `jitter!`, `enabled_ages`, and the model's
 four-argument `enable` seam). The extension also keeps the CG-M4 calling
 convention `branching_gradient(sim_factory, initializer, θ, f_state; ...)`
 working: it wraps the pair into a conforming world factory and forwards.
@@ -73,7 +78,7 @@ the machine-repair CTMC-oracle test below.
 ```@example branchable
 using ClockGradients
 using CompetingClocks: CombinedNextReaction, enable!, disable!, fire!, next,
-    clone, rekey_streams!, reenable!, force_fire!, enabled_ages
+    clone, rekey_streams!, jitter!, force_fire!, enabled_ages
 using Distributions
 using Random: Xoshiro
 
@@ -153,10 +158,7 @@ branch_force!(w::MiniWorld, key, t) = (force_fire!(w.sampler, key, t); apply_fir
 branch_clone(w::MiniWorld) = MiniWorld(w.model, copy(w.θ), w.state, clone(w.sampler), w.time)
 function branch_rekey!(w::MiniWorld, seed)
     rekey_streams!(w.sampler, UInt64(seed))
-    for (k, age) in enabled_ages(w.sampler, w.time)   # redraw scheduled clocks
-        reenable!(w.sampler, k, clock_distribution(w.model, w.θ, k),
-                  w.time - age, w.time, :redraw)
-    end
+    jitter!(w.sampler, w.time)   # redraw every scheduled clock, conditioned on age
     w
 end
 branch_time(w::MiniWorld) = w.time

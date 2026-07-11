@@ -15,14 +15,14 @@
 #   * branch_commit!         -> ChronoSim.fire!(sim, tstar, key)
 #   * branch_force!          -> ChronoSim.force_fire!(sim, key, tstar)
 #   * branch_clone           -> ChronoSim.clone(sim)
-#   * branch_rekey!          -> ChronoSim.rekey_streams!(sim, seed) PLUS a
-#                               per-clock reenable!(..., :redraw) sweep:
+#   * branch_rekey!          -> ChronoSim.rekey_streams!(sim, seed) PLUS
+#                               CompetingClocks.jitter!(sim.sampler, when):
 #                               re-seeding alone leaves the backend's cached
 #                               putative firing times replaying the OLD
 #                               randomness, so the fresh-draw obligation of the
 #                               verb requires resampling every scheduled clock
-#                               at the current time (rekey-then-resample, the
-#                               idiom behind CompetingClocks' split!).
+#                               at the current time (rekey-then-jitter, the
+#                               same pairing CompetingClocks' split! uses).
 #   * branch_time            -> sim.when
 #   * branch_enabled_ages    -> CompetingClocks.enabled_ages(sim.sampler, when)
 #   * branch_clock_distribution -> the model's four-argument
@@ -64,20 +64,21 @@ ClockGradients.branch_clone(sim::SimulationFSM) = ChronoSim.clone(sim)
 # ChronoSim's rekey_streams! reseeds both stream families but the NextReaction
 # backend caches putative firing times, so without a resample the world's next
 # firings would replay the pre-rekey draws (and every branching replication
-# would share the factory world's opening draws). reenable!(..., :redraw)
-# discards each enabled clock's retained draw and redraws its remaining
-# lifetime from its own freshly-keyed stream, conditioned on the clock's age —
-# a resample at a stopping time, so the trajectory law is unchanged and two
-# same-seed rekeys still couple. The distribution passed back through the
-# context is the model's own, rebuilt at the sim's primal parameters; te is
-# preserved (relative_te = −age), so ages and ChronoSim's bookkeeping are
-# untouched.
+# would share the factory world's opening draws). jitter! is CompetingClocks'
+# canonical divergence primitive for exactly this — it walks every scheduled
+# entry and redraws its remaining lifetime from the clock's own freshly-keyed
+# stream, conditioned on the clock's age, using the clock's STORED distribution
+# (the same distribution the model enabled at the sim's primal parameters).
+# That is a resample at a stopping time, so the trajectory law is unchanged and
+# two same-seed rekeys still couple; te and ages stay untouched. It also
+# extinguishes CombinedNextReaction's retained-disabled survival banks —
+# residual randomness an enabled-only sweep could not reach — and it is
+# independent of the sampler's construction-time coupling field, which a
+# reenable! sweep is not (a :carry re-evaluation with an unchanged distribution
+# is a bit-for-bit no-op, so it would never diverge).
 function ClockGradients.branch_rekey!(sim::SimulationFSM, seed)
     ChronoSim.rekey_streams!(sim, UInt64(seed))
-    for (key, age) in CompetingClocks.enabled_ages(sim.sampler, sim.when)
-        dist = ClockGradients.branch_clock_distribution(sim, sim.params, key)
-        CompetingClocks.reenable!(sim.sampler, key, dist, -age, :redraw)
-    end
+    CompetingClocks.jitter!(sim.sampler, sim.when)
     return sim
 end
 
