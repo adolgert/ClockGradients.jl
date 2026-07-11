@@ -153,3 +153,23 @@ model's physical/discrete state — a failure counter carried in it is how a
 cumulative count becomes a terminal-state read.
 """
 function branch_state end
+
+"""
+    branch_schedule(world) -> Vector{Tuple{K,Float64}}
+
+OPTIONAL tenth verb: every currently-enabled clock paired with its SCHEDULED
+(putative) firing time, sorted by time, so the first entry is the same
+`(key, time)` pair `branch_peek` reports (transposed). Only the
+smoothed-perturbation-analysis estimator's `TruncatedHazard()` weight strategy
+requires it — the runner-up's residual `η` is its second entry's time minus
+the decision time — so a world may decline to implement it and still receive
+every other estimator, including SPA's default `HazardWeight()` strategy. A
+world without a method fails at first use with an ordinary `MethodError`
+naming this generic.
+
+Implementing it is cheap for a scheduling backend (the sampler already stores
+the putative times); a rejection-style backend that never schedules has
+nothing truthful to return and should leave the verb unimplemented rather
+than fabricate times.
+"""
+function branch_schedule end

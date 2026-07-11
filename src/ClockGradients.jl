@@ -75,6 +75,9 @@ export PairedGradient, paired_estimate, paired_simulate_and_estimate
 export branch_peek, branch_commit!, branch_force!, branch_clone, branch_rekey!,
     branch_time, branch_enabled_ages, branch_clock_distribution, branch_state
 export check_branchable
+# The OPTIONAL tenth verb: scheduled firing times, required only by the SPA
+# estimator's TruncatedHazard weight strategy.
+export branch_schedule
 
 # The weak-derivative branching estimator, written against the protocol.
 export branching_gradient

@@ -76,6 +76,11 @@ diagnostics:
   * `distribution_dual` — rebuilt at a `ForwardDiff.Dual`-valued `θ`, every
     enabled clock's distribution carries the dual in its parameters
     (`Distributions.partype` follows `eltype(θ)`), so derivatives can flow.
+  * `schedule_consistent` — when the world implements the OPTIONAL
+    [`branch_schedule`](@ref) verb, its answer is truthful: sorted by time,
+    keys exactly the enabled set, first entry agreeing with `branch_peek`.
+    A world without the verb passes vacuously; the separate `schedule_verb`
+    field reports `:present` or `:absent`.
   * `pass` — the conjunction of all of the above.
   * `diagnostics::Vector{String}` — one message per failed or errored check.
 
@@ -219,6 +224,26 @@ function check_branchable(world_factory::Function, θ::AbstractVector;
         type_ok
     end
 
+    # The OPTIONAL tenth verb: absent is conforming (schedule_verb = :absent
+    # and the consistency check passes vacuously); present must be truthful —
+    # sorted by time, keys exactly the enabled set, first entry the peek.
+    schedule_verb = Ref(:absent)
+    schedule_consistent = _bc_check(:schedule_consistent, diags) do
+        w = world_at(mid)
+        hasmethod(branch_schedule, Tuple{typeof(w)}) || return true
+        schedule_verb[] = :present
+        sched = branch_schedule(w)
+        issorted([s[2] for s in sched]) ||
+            (push!(diags, "schedule_consistent: times not sorted in $(sched)"); return false)
+        Set(first.(sched)) == Set(first.(branch_enabled_ages(w))) ||
+            (push!(diags, "schedule_consistent: schedule keys $(sort(first.(sched))) differ from enabled keys"); return false)
+        pk = branch_peek(w)
+        pk === nothing && return true
+        (sched[1][1] == pk[2] && sched[1][2] == pk[1]) ||
+            (push!(diags, "schedule_consistent: first entry $(sched[1]) disagrees with peek $(pk)"); return false)
+        true
+    end
+
     checks = (peek_repeatable=peek_repeatable[],
               peek_commit_progress=peek_commit_progress,
               clone_coupled=clone_coupled,
@@ -229,6 +254,8 @@ function check_branchable(world_factory::Function, θ::AbstractVector;
               ages_sorted=ages_sorted,
               ages_nonnegative=ages_nonnegative[],
               distribution_type=distribution_type,
-              distribution_dual=distribution_dual[])
-    (; pass=all(values(checks)), checks..., diagnostics=diags)
+              distribution_dual=distribution_dual[],
+              schedule_consistent=schedule_consistent)
+    (; pass=all(values(checks)), checks..., schedule_verb=schedule_verb[],
+       diagnostics=diags)
 end

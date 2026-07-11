@@ -105,6 +105,13 @@ branch_state
 check_branchable
 ```
 
+The optional tenth verb, required only by the SPA estimator's truncated-hazard
+weight strategy:
+
+```@docs
+branch_schedule
+```
+
 ## The packaged world
 
 A minimal simulation runner implementing every verb, so a pure five-function

@@ -18,6 +18,28 @@ const _BW_N = 5
 
 toy_factory() = ClockWorld(MachineRepair(_BW_N), _BW_θ; seed=1)
 
+# A world implementing the nine required verbs but NOT the optional schedule
+# verb, for the vacuous-pass conformance case: forwards everything to a wrapped
+# ClockWorld except branch_schedule, which it deliberately lacks.
+struct NoScheduleWorld
+    inner::Any
+end
+ClockGradients.branch_peek(w::NoScheduleWorld) = ClockGradients.branch_peek(w.inner)
+ClockGradients.branch_commit!(w::NoScheduleWorld, key, tstar) =
+    (ClockGradients.branch_commit!(w.inner, key, tstar); w)
+ClockGradients.branch_force!(w::NoScheduleWorld, key, tstar) =
+    (ClockGradients.branch_force!(w.inner, key, tstar); w)
+ClockGradients.branch_clone(w::NoScheduleWorld) =
+    NoScheduleWorld(ClockGradients.branch_clone(w.inner))
+ClockGradients.branch_rekey!(w::NoScheduleWorld, seed) =
+    (ClockGradients.branch_rekey!(w.inner, seed); w)
+ClockGradients.branch_time(w::NoScheduleWorld) = ClockGradients.branch_time(w.inner)
+ClockGradients.branch_enabled_ages(w::NoScheduleWorld) =
+    ClockGradients.branch_enabled_ages(w.inner)
+ClockGradients.branch_clock_distribution(w::NoScheduleWorld, θ::AbstractVector, key) =
+    ClockGradients.branch_clock_distribution(w.inner, θ, key)
+ClockGradients.branch_state(w::NoScheduleWorld) = ClockGradients.branch_state(w.inner)
+
 testset_if("branchable: the packaged ClockWorld built on the raw CompetingClocks sampler passes every conformance obligation of the protocol") do
     rep = check_branchable(toy_factory, _BW_θ; nsteps=20, seed=0xBEEF)
     for msg in rep.diagnostics
@@ -140,4 +162,25 @@ testset_if("branchable: the core package source never names ChronoSim — the es
             push!(offenders, fname)
     end
     @test isempty(offenders)
+end
+
+testset_if("branchable: the optional schedule verb reports enabled clocks sorted by time with the peek first, and its absence is conforming") do
+    w = ClockWorld(MachineRepair(_BW_N), _BW_θ; seed=5)
+    ClockGradients.branch_rekey!(w, 0xD00D)
+    sched = ClockGradients.branch_schedule(w)
+    @test length(sched) == _BW_N                # all machines up: one fail clock each
+    @test issorted([s[2] for s in sched])
+    pk = ClockGradients.branch_peek(w)
+    @test sched[1][1] == pk[2] && sched[1][2] == pk[1]
+
+    rep = check_branchable(toy_factory, _BW_θ)
+    @test rep.schedule_verb === :present
+    @test rep.schedule_consistent
+
+    # A world type without the verb: conformance must pass vacuously and say so.
+    # NoScheduleWorld wraps ClockWorld, forwarding every verb EXCEPT the schedule.
+    rep2 = check_branchable(() -> NoScheduleWorld(ClockWorld(MachineRepair(_BW_N), _BW_θ; seed=6)), _BW_θ)
+    @test rep2.schedule_verb === :absent
+    @test rep2.schedule_consistent
+    @test rep2.pass
 end

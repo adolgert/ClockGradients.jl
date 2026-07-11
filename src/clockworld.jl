@@ -139,3 +139,13 @@ branch_clock_distribution(w::ClockWorld, θ::AbstractVector, key) =
     clock_distribution(w.model, θ, key, w.state)
 
 branch_state(w::ClockWorld) = w.state
+
+# The optional tenth verb: the sampler stores every enabled clock's putative
+# firing time (Base.getindex), so the schedule is a read filtered to the
+# enabled set — CombinedNextReaction retains disabled entries for draw reuse,
+# and those must not surface.
+function branch_schedule(w::ClockWorld)
+    sched = [(k, w.sampler[k]) for (k, _) in enabled_ages(w.sampler, w.time)]
+    sort!(sched; by = p -> p[2])
+    return sched
+end

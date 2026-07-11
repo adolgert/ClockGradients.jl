@@ -36,7 +36,8 @@ module ClockGradientsChronoSimExt
 
 using ClockGradients: ClockGradients, branching_gradient,
     branch_peek, branch_commit!, branch_force!, branch_clone, branch_rekey!,
-    branch_time, branch_enabled_ages, branch_clock_distribution, branch_state
+    branch_time, branch_enabled_ages, branch_clock_distribution, branch_state,
+    branch_schedule
 using ChronoSim: ChronoSim, SimulationFSM, InitializeEvent
 using CompetingClocks: CompetingClocks
 
@@ -112,6 +113,17 @@ function ClockGradients.branch_clock_distribution(sim::SimulationFSM,
 end
 
 ClockGradients.branch_state(sim::SimulationFSM) = sim.physical
+
+# The optional tenth verb. The context-level getindex (CompetingClocks 0.4.1)
+# reports an enabled clock's scheduled firing time, so the schedule is the
+# enabled-ages key set annotated with stored times — still no reach past the
+# context boundary into the raw backend.
+function ClockGradients.branch_schedule(sim::SimulationFSM)
+    sched = [(k, sim.sampler[k])
+             for (k, _) in CompetingClocks.enabled_ages(sim.sampler, sim.when)]
+    sort!(sched; by = p -> p[2])
+    return sched
+end
 
 # --- the back-compatible convenience entry point ------------------------------
 
