@@ -224,3 +224,134 @@ replications the estimate
 `[10.727, 3.568]` at `z = [0.46, 0.26]` — the branching estimator reproducing
 its oracle through a world that has never heard of ChronoSim, which is the
 proof that the estimator depends only on this protocol.
+
+## Deriving the contract from a ChronoSim model
+
+The branchable-world verbs above adapt a *running* ChronoSim simulation. The
+same package extension also derives the five-function
+[model contract](reference.md#The-model-contract) for a `ChronoSim.GsmpModel`
+— the model *value* holding the event families, the initial law, and the
+parameter names — so the record-replay estimators (`score_estimate`,
+`ipa_estimate`, `paired_estimate`) consume a ChronoSim model directly, with no
+hand-written parallel model. Each contract function is derived from the model
+value's own machinery: `initial_state` samples the point-mass initial law,
+`clockkeytype` is the model's instance-key union, `enabled` is a from-scratch
+generator scan sorted by the model's key order, the four-argument
+`clock_distribution` is the model's own `enable(event, physical, θ, when)`
+seam through the family's resolved parameter view, and `fire` clones the state
+and applies the engine's composite firing step (user `fire!` plus the
+immediate-event cascade).
+
+```julia
+using ClockGradients, ChronoSim   # loading both activates the extension
+
+model = ChronoSim.GsmpModel(
+    events  = (Fail, Repair),            # ordinary ChronoSim event types
+    initial = () -> all_up_state(5),     # a point-mass (deterministic) law
+    params  = (:lambda, :mu),
+)
+θ = [0.5, 1.5]
+
+# Simulate through ChronoSim's front door, ingest each MinimalRecord through
+# the derived contract, and run the paired score/IPA estimator unchanged.
+fn = IntegratedOccupancy(s -> count(!s.machine[i].up for i in eachindex(s.machine)))
+res = paired_simulate_and_estimate(rng, model, θ, fn; nreps=8000, horizon=8.0)
+```
+
+The conversion seam is [`gradient_record`](@ref): it maps a
+`ChronoSim.MinimalRecord`'s `(key, time)` firing sequence onto the bare-trace
+`GradientRecord` constructor, which reconstructs the enabling times, the
+retained log-uniforms, and the segment chains by folding the derived contract
+over the trace.
+
+Both packages export functional types with the same three names
+(`IntegratedOccupancy`, `TerminalObservable`, `FirstPassageTime`) and the same
+constructor semantics — deliberately duplicated, because the dependency points
+ClockGradients → ChronoSim, so ChronoSim cannot import ClockGradients' types.
+When both packages are loaded, the extension accepts *either* package's
+functionals at the estimator entry points (`score_estimate`, `ipa_estimate`,
+`paired_estimate`, `paired_simulate_and_estimate`): a ChronoSim functional is
+converted to its ClockGradients twin on the way in, so a model written
+entirely against ChronoSim's types needs no qualification or hand conversion.
+The duplication itself remains; only the seam is closed (decision gate G-A,
+closed 2026-07-12).
+
+The derivation refuses, by name, what it cannot make correct. The two
+refusals every adopter meets first:
+
+  * **A random or θ-dependent initial law.** The contract folds every
+    trajectory's states from the one state `initial_state(model)` returns, so
+    a law with more than one possible time-zero state has no single state to
+    return. `initial_state` throws an `ArgumentError` naming the law's form
+    and the fix: score such a model through ChronoSim's `trace_likelihood`
+    (each `MinimalRecord` carries its own realized initial state), or declare
+    the initial condition as a state value or a zero-argument thunk.
+  * **A `fire!` that draws randomness.** The derived `fire` must be a pure
+    function of `(state, key)` — the state fold that reconstructs a record's
+    trajectory has no seed to reproduce draws from. `fire` runs the composite
+    step under a counting RNG and throws an `ArgumentError` naming the event
+    type if any draw occurred; `gradient_record` likewise refuses a
+    `MinimalRecord` whose `fire_random` flag is set. The fix is to move the
+    draw into competing clocks (one event per outcome).
+
+Three further refusals guard the bookkeeping: a `:resume` memory policy
+(the record replay applies the GSMP fresh-clock rule), a delayed enabling
+(`enable` returning `te ≠ when` has no slot in the reconstructed ages), and
+the three-argument `clock_distribution` form (a `GsmpModel`'s enables
+genuinely need the physical state, so only the state-dependent four-argument
+form is defined).
+
+### Capability tiers
+
+Gradient technology has not caught up to full modern simulation
+expressiveness, and the framework's response is graded rather than
+prohibitive: nothing an author can write is ever refused at *simulation* time;
+each estimator states, per model and by name, exactly where the frontier sits.
+The grading is a ladder of tiers:
+
+  * **Tier 0 — simulate.** Everything ChronoSim can express: a `fire!` that
+    draws from its generator, immediate events, delayed enabling times, any
+    initial-law rung, arbitrary stop closures. Never restricted. This tier is
+    the product; the others are bonuses.
+  * **Tier 1 — replay and score.** Requires the trajectory to determine the
+    state sequence: no firing may draw randomness (the framework *knows* this
+    from its counting-RNG detection rather than asking the author to promise),
+    and the initial law must be foldable and scoreable — point-mass for the
+    derived contract, with a θ-dependent law needing a log-density for the
+    score's initial term. The trajectory likelihood, `score_estimate`, and
+    `gradient_record` live here.
+  * **Tier 2 — pathwise/IPA and the score/IPA pairing.** Additionally requires
+    dual-safe clock distributions (`Exponential`, `Weibull`, `LogNormal`
+    today — the `ClockGradients.DUAL_SAFE_DISTRIBUTIONS` tuple is the one
+    source of truth); a Gamma clock refuses by name.
+  * **Tier 3 — branching and SPA.** Requires the clonable world, which
+    ChronoSim's `SimulationFSM` delivers (`clone` plus `rekey_streams!`, the
+    M6 guarantee). This is a framework property, independent of the
+    record-replay requirements, so it holds even for a fire-random model.
+
+[`capability_report`](@ref) diagnoses the ladder for one model value, in the
+same report-not-throw style as [`check_branchable`](@ref):
+
+```julia
+report = capability_report(model, θ)   # (tier0_simulate = true,
+                                       #  tier1_replay_score = false, ...,
+                                       #  unexercised = DataType[],
+                                       #  diagnostics = ["Break's firing consumed randomness (...)"])
+```
+
+The initial-law and memory-policy checks are static reads of the model value,
+but fire-randomness is a *runtime* property of `fire!` bodies on reachable
+states, so the report probes: it runs a few short seeded simulations
+(`probe_horizon`, `probe_seeds` keywords), reads each record's `fire_random`
+flag, and folds each record's key sequence through the derived draw-refusing
+`fire`, exercising every event family's `fire!` and clock distribution once on
+the first probe state that enables it. Each diagnostic names the responsible
+event family or model slot and one action that lifts the restriction — "record
+its draws or model the outcome as competing events", "supply one, or express
+the initialization as time-zero events" — never a bare `MethodError`.
+
+One honesty caveat: a family the probe never enables is **not** silently
+passed. It is listed in the report's `unexercised` field with its own
+diagnostic, and the tier booleans mean "no obstruction detected on the states
+the probe reached". A caller who needs the strong reading asserts
+`isempty(report.unexercised)` and lengthens the probe until it holds.

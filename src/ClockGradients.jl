@@ -54,6 +54,10 @@ export sync_enabling_times!
 
 # Records: the flattened trajectory the estimators replay, and its builders.
 export GradientRecord, Bookkeeper, reconstructed_enabling_times
+# The framework-record ingestion seam: a generic function with no core methods;
+# a simulation framework's package extension attaches one method per record
+# type it can ingest (the core deliberately never names any framework).
+export gradient_record
 
 # Functionals: the smoothness-typed observables the estimators average.
 export PathFunctional, IntegratedOccupancy, TerminalObservable, FirstPassageTime
@@ -75,6 +79,10 @@ export PairedGradient, paired_estimate, paired_simulate_and_estimate
 export branch_peek, branch_commit!, branch_force!, branch_clone, branch_rekey!,
     branch_time, branch_enabled_ages, branch_clock_distribution, branch_state
 export check_branchable
+# The capability-tier diagnosis: a generic function with no core methods; a
+# framework's package extension attaches one method per model type it can
+# diagnose (the core deliberately never names any framework).
+export capability_report
 # The OPTIONAL tenth verb: scheduled firing times, required only by the SPA
 # estimator's TruncatedHazard weight strategy.
 export branch_schedule
