@@ -1,0 +1,84 @@
+name: CI
+on:
+  push:
+    branches:
+      - main
+    tags: ['*']
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+jobs:
+  test:
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions: # needed to allow julia-actions/cache to proactively delete old caches that it has created
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # This package develops the unregistered CompetingClocks 0.4 via a
+        # [sources] path entry, which Julia only honors on 1.11+. On 1.10 (lts)
+        # [sources] is ignored and resolution falls back to the registered
+        # CompetingClocks 0.1-0.3, failing the 0.4 compat bound, so lts is out.
+        # The suite's seeded statistical tests are calibrated to a released
+        # RNG stream and drift on prerelease Julia, so 'pre' is out too; we
+        # pin the two current released versions that support [sources].
+        version:
+          - '1.11'
+          - '1.12'
+        os:
+          - ubuntu-latest
+        arch:
+          - x64
+    steps:
+      # This package develops CompetingClocks and (for the extension tests)
+      # ChronoSim by relative path — see the [sources] entries in Project.toml
+      # and test/Project.toml. Those paths point at sibling checkouts, which do
+      # not exist on a runner. Rather than rewrite the checked-in path sources,
+      # we recreate the sibling layout the paths expect by checking out the
+      # public repos next to this one:
+      #     <workspace>/ClockGradients.jl   (this repo)
+      #     <workspace>/CompetingClocks.jl  (../CompetingClocks.jl)
+      #     <workspace>/ChronoSim.jl        (../../ChronoSim.jl from test/)
+      # ChronoSim's own path source on CompetingClocks is ignored while ChronoSim
+      # is a dependency; the CompetingClocks source in test/Project.toml governs
+      # the whole graph, so all three resolve from these checkouts.
+      - name: Check out ClockGradients.jl
+        uses: actions/checkout@v4
+        with:
+          path: ClockGradients.jl
+      - name: Check out CompetingClocks.jl (public; has the 0.4 changes)
+        uses: actions/checkout@v4
+        with:
+          repository: adolgert/CompetingClocks.jl
+          ref: main
+          path: CompetingClocks.jl
+      - name: Check out ChronoSim.jl (public; weakdep for the extension tests)
+        uses: actions/checkout@v4
+        with:
+          repository: adolgert/ChronoSim.jl
+          ref: main
+          path: ChronoSim.jl
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.version }}
+          arch: ${{ matrix.arch }}
+      - uses: julia-actions/cache@v2
+      # The checked-in manifests are resolved on a single developer's Julia
+      # version. Drop them on the runner so each matrix version resolves the
+      # sibling path deps fresh; the checked-in files stay put for local dev.
+      - name: Resolve dependencies fresh for this Julia version
+        shell: bash
+        run: rm -f ClockGradients.jl/Manifest.toml ClockGradients.jl/test/Manifest.toml
+      - uses: julia-actions/julia-buildpkg@v1
+        with:
+          project: ClockGradients.jl
+      - uses: julia-actions/julia-runtest@v1
+        with:
+          project: ClockGradients.jl
