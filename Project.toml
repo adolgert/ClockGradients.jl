@@ -17,7 +17,7 @@ ChronoSim = "3d4a2042-d4c0-4032-96bb-6b9d4a3cae87"
 ClockGradientsChronoSimExt = "ChronoSim"
 
 [sources]
-CompetingClocks = {path = "../CompetingClocks.jl"}
+CompetingClocks = {url = "https://github.com/adolgert/CompetingClocks.jl.git"}
 
 [compat]
 ChronoSim = "0.1"
