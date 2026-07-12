@@ -1,5 +1,10 @@
 # ClockGradients.jl
 
+[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://computingkitchen.com/ClockGradients.jl/stable)
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://computingkitchen.com/ClockGradients.jl/dev)
+[![Build Status](https://github.com/adolgert/ClockGradients.jl/workflows/CI/badge.svg)](https://github.com/adolgert/ClockGradients.jl/actions)
+[![Coverage](https://codecov.io/gh/adolgert/ClockGradients.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/adolgert/ClockGradients.jl)
+
 Derivative estimators for continuous-time discrete-event simulation.
 Given a generalized-semi-Markov-process model and a path functional `f`,
 ClockGradients estimates `∂θ E[f(X_θ)]` by Monte Carlo, layered over
@@ -59,15 +64,22 @@ verdict = paired_simulate_and_estimate(Xoshiro(101), ExpRace(), [1.0, 2.0],
 
 ## Installation
 
-The package is developed against the sibling working trees of
-CompetingClocks.jl (>= 0.4) and ChronoSim.jl by relative path (see
-`[sources]` in `Project.toml` and `test/Project.toml`); check the three
-repositories out side by side and `Pkg.develop` this one. It is not
-registered.
+ClockGradients is not registered, and it depends on the unregistered
+CompetingClocks.jl (>= 0.4) and ChronoSim.jl. Its `Project.toml` and
+`test/Project.toml` point at those through `[sources]` git-URL entries, so
+cloning this repository and instantiating its environment pulls the whole
+graph — no sibling checkouts required:
+
+```julia
+pkg> activate /path/to/ClockGradients.jl
+pkg> instantiate
+```
 
 ## Documentation
 
-Build the manual locally with `julia --project=docs docs/make.jl`. The manual
+The manual is published at
+[computingkitchen.com/ClockGradients.jl](https://computingkitchen.com/ClockGradients.jl/stable/);
+build it locally with `julia --project=docs docs/make.jl`. The manual
 covers choosing an estimator (with the measured validity evidence), record
 ingestion and coupling labels, the branchable-world interface (how a
 framework adopts the branching estimator), a runnable machine-repair worked
