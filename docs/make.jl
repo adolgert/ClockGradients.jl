@@ -13,15 +13,15 @@ makedocs(
     # (Bookkeeper internals, the extension's helpers) are documentation for
     # readers of the source, not manual entries.
     checkdocs = :exports,
-    # The repository is private and, at documentation-writing time, has no
-    # remote configured; disable source links rather than guess a URL.
-    remotes = nothing,
     format = Documenter.HTML(
         prettyurls = get(ENV, "CI", nothing) == "true",
         size_threshold = 4_000_000,
         size_threshold_warn = 2_000_000,
-        edit_link = nothing,
-        repolink = nothing,
+        edit_link = "main",
+        # Served through the computingkitchen.com custom domain on
+        # adolgert.github.io; the canonical link points at that public URL.
+        canonical = "https://computingkitchen.com/ClockGradients.jl",
+        assets = String[],
     ),
     pages = [
         "Home" => "index.md",
@@ -36,4 +36,11 @@ makedocs(
             "API reference" => "reference.md",
         ],
     ],
+)
+
+deploydocs(
+    repo = "github.com/adolgert/ClockGradients.jl.git",
+    devbranch = "main",
+    branch = "gh-pages",
+    target = "build",
 )
