@@ -64,8 +64,14 @@ adding two independent Monte Carlo errors.
 """
 function paired_estimate(model, θ::AbstractVector,
                          records::AbstractVector{<:GradientRecord}, fn::PathFunctional)
-    sc = score_estimate(model, θ, records, fn)
+    # IPA runs FIRST so its dual-safety gate (`_assert_dual_safe`) refuses a
+    # non-dual-safe clock BY NAME before the score replay can hit the same
+    # Float64-only Rmath wall: Gamma's `logccdf` (which the score's survival
+    # terms need at a dual θ) is as Float64-bound as its quantile, and the
+    # score path has no gate, so score-first would surface a bare MethodError
+    # from inside StatsFuns instead of the named tier-2 refusal.
     ip = ipa_estimate(model, θ, records, fn)
+    sc = score_estimate(model, θ, records, fn)
     diff = sc.estimate .- ip.estimate
     pooled = sqrt.(sc.stderr .^ 2 .+ ip.stderr .^ 2)
     z = diff ./ pooled

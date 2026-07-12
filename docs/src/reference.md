@@ -45,6 +45,15 @@ Bookkeeper
 reconstructed_enabling_times
 ```
 
+The framework-record ingestion seam. The core defines no methods; a
+simulation framework's package extension attaches one method per record type
+it can ingest (the ClockGradients–ChronoSim extension attaches the
+`ChronoSim.MinimalRecord` method).
+
+```@docs
+gradient_record
+```
+
 ## Path functionals
 
 ```@docs
@@ -103,6 +112,7 @@ branch_enabled_ages
 branch_clock_distribution
 branch_state
 check_branchable
+capability_report
 ```
 
 The optional tenth verb, required only by the SPA estimator's truncated-hazard

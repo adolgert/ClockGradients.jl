@@ -259,3 +259,44 @@ function check_branchable(world_factory::Function, θ::AbstractVector;
     (; pass=all(values(checks)), checks..., schedule_verb=schedule_verb[],
        diagnostics=diags)
 end
+
+"""
+    capability_report(model, θ; probe_horizon, probe_seeds) -> NamedTuple
+
+Diagnose which ESTIMATOR TIERS one model supports, in the style of
+[`check_branchable`](@ref): one `Bool` per tier plus human-readable
+`diagnostics`, never an exception. The tier ladder is the design's grading of
+where gradient technology meets simulation expressiveness:
+
+  * `tier0_simulate` — everything the simulation framework can express.
+    Never restricted by this package; confirmed by short probe simulations.
+  * `tier1_replay_score` — record replay and the score estimator
+    ([`score_estimate`](@ref)). Requires the trajectory to determine the state
+    sequence (no `fire!` may draw randomness) and an initial law the derived
+    contract can fold from (and, for the score's initial term, a law that is
+    θ-free or carries a log-density).
+  * `tier2_pathwise_pairing` — the pathwise/IPA replay ([`ipa_estimate`](@ref))
+    and the score/IPA pairing ([`paired_estimate`](@ref)). Additionally
+    requires every clock distribution to be dual-safe — a member of
+    `DUAL_SAFE_DISTRIBUTIONS` ($(join(string.(nameof.(DUAL_SAFE_DISTRIBUTIONS)), ", "))),
+    the one source of truth the IPA replay gate also consults.
+  * `tier3_branching` — the branching and SPA estimators. Requires the
+    clonable world (clone and rekey on a live simulation), a framework
+    guarantee rather than a per-model property.
+
+Tiers 0–2 are cumulative (a false tier falsifies the tiers above it); tier 3's
+requirement is independent of the record-replay requirements, so it is reported
+on its own. Each diagnostic names the RESPONSIBLE event family or model slot
+and one action that lifts the restriction; the `unexercised` field lists event
+families the probe never reached, whose obligations were therefore NOT checked
+(the tier booleans mean "no obstruction detected", not "proved for every
+family").
+
+The core package defines NO methods: the tier checks read a framework's model
+value — its initial law, its per-family memory policies, its firing rules — so
+a framework's package extension attaches one method per model type it can
+diagnose (the core deliberately never names any framework, the same seam rule
+as [`gradient_record`](@ref)). See the extension method's docstring for its
+probe semantics (`probe_horizon`, `probe_seeds`) and the honesty caveat.
+"""
+function capability_report end

@@ -30,10 +30,16 @@
 # Rmath-backed ones. We reject those up front with a named error rather than
 # letting a deep MethodError surface from inside ForwardDiff. Documented in
 # knowledge/proto_pathwise_ipa.md (charter question 4).
-_dual_safe(::Exponential) = true
-_dual_safe(::Weibull) = true
-_dual_safe(::LogNormal) = true
-_dual_safe(::UnivariateDistribution) = false
+#
+# This tuple is the ONE source of truth for the dual-safe set: the IPA replay
+# gate below and the capability-tier diagnosis (`capability_report`, attached by
+# framework extensions) both consult it, so extending the set here extends both.
+const DUAL_SAFE_DISTRIBUTIONS = (Exponential, Weibull, LogNormal)
+
+_dual_safe(d::UnivariateDistribution) = any(D -> d isa D, DUAL_SAFE_DISTRIBUTIONS)
+
+_dual_safe_names() =
+    join((string(nameof(D)) for D in DUAL_SAFE_DISTRIBUTIONS), ", ", ", and ")
 
 @inline function _assert_dual_safe(d, key)
     _dual_safe(d) && return nothing
@@ -41,9 +47,11 @@ _dual_safe(::UnivariateDistribution) = false
         "IPA dual replay is not supported for clock $key with distribution " *
         "$(nameof(typeof(d))): its quantile (`invlogccdf`) routes through an " *
         "Rmath Float64-only path that throws under a ForwardDiff.Dual parameter, " *
-        "so the pathwise derivative cannot flow through it. The dual-safe " *
-        "families are Exponential, Weibull, and LogNormal, whose `invlogccdf` " *
-        "has an analytic dual-friendly form. See proto_pathwise_ipa.md."))
+        "so the pathwise derivative cannot flow through it. Switch clock $key " *
+        "to one of the dual-safe families ($(_dual_safe_names()), whose " *
+        "`invlogccdf` has an analytic dual-friendly form), or estimate this " *
+        "functional with score_estimate alone, which never inverts a quantile. " *
+        "See proto_pathwise_ipa.md."))
 end
 
 """

@@ -299,6 +299,22 @@ function GradientRecord(model, rec::TrajectoryRecorder; coupling::Symbol)
                       Float64(rec.horizon), coupling)
 end
 
+"""
+    gradient_record(model, framework_record, θ0) -> GradientRecord
+
+The FRAMEWORK-RECORD ingestion seam: convert a simulation framework's own
+trajectory record into a `GradientRecord` at the sampling parameter `θ0`,
+so `score_estimate` / `ipa_estimate` / `paired_estimate` consume the framework's
+records directly. The core package defines NO methods — it does not know any
+framework's record schema (and, by the structural pin in the tests, never names
+one). A framework's package extension attaches one method per record type it
+can ingest, typically over the bare-trace `GradientRecord` constructor (the
+record contributes the `(key, time)` firings, the horizon, and the coupling
+label; the extension refuses records whose firing sequence is not a
+deterministic function of the initial condition).
+"""
+function gradient_record end
+
 # Invert the carry chain backward from the firing age to the enabling age
 # (DerivedDraws identity (C)): with segment distributions `dists` (at θ0),
 # segment-opening ages `a_i = times[seg_step_i] − te`, and the firing age
