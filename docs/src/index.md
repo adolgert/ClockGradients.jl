@@ -21,20 +21,20 @@ public surfaces:
     the ordered firing sequence together with the survival-space uniform
     behind every firing, satisfying the retained-draw identity (see the
     CompetingClocks manual's "Recording Trajectories" and "Contract and
-    Invariants" pages). Two of the three estimators here run entirely off
+    Invariants" pages). The score and pathwise estimators run entirely off
     that record, with no further access to the sampler.
-  * **ChronoSim.jl** supplies the running world for the one estimator that
-    needs more than a record: its "How the system fits together" chapter
+  * **ChronoSim.jl** supplies the running world for the two estimators that
+    need more than a record: its "How the system fits together" chapter
     draws an architecture with an estimator-layer box outside both packages,
-    and this package is that box. The branching estimator is written against
-    a nine-verb [branchable-world interface](branchable.md); ChronoSim's
-    `SimulationFSM` implements those verbs (via its `clone`,
+    and this package is that box. The branching and SPA estimators are written
+    against a nine-verb [branchable-world interface](branchable.md);
+    ChronoSim's `SimulationFSM` implements those verbs (via its `clone`,
     `rekey_streams!`, and `force_fire!` capabilities — see ChronoSim's
     "Cloning and branching" page) through a package extension that loads only
     when ChronoSim is present, and any other framework can conform the same
     way.
 
-## The three estimators
+## The estimators
 
 **The score-function estimator** (also called the likelihood-ratio estimator)
 holds the trajectory fixed and differentiates its log-likelihood:
@@ -60,6 +60,18 @@ it is the expensive member of the family — it requires a live
 [branchable world](branchable.md) rather than a record, and it spawns on the
 order of dozens of clones per replication.
 
+**The smoothed-perturbation-analysis estimator** (SPA, Fu & Hu) targets the
+same event-order regime as branching but *conditions* instead of *splitting*:
+its estimate is the pathwise (IPA) term plus a boundary term that, at each
+event, weights every enabled non-winner by its hazard, by a one-sided
+crossing rate, and by the functional jump the order swap would cause —
+[`spa_gradient`](@ref). A criticality gate proves most swaps cannot move the
+functional and spawns no clones for them, so at a comparable clone budget SPA
+measured ≈5× tighter in variance×time than branching on the machine-repair
+count. Like branching it needs a live [branchable world](branchable.md), and
+in addition a pure model twin, value-`==` states, and no mid-flight clock
+re-evaluation.
+
 ## Which one should I reach for?
 
 Run the score and pathwise estimators *together* on the same records with
@@ -70,23 +82,31 @@ statistically significant difference between them is a measurement of IPA's
 bias, and agreement is a certificate that the cheaper, tighter IPA number can
 be trusted. When the pairing flags a bias — which it does exactly on the
 functionals whose sensitivity lives in event order — fall back to the score
-estimate, or to [`branching_gradient`](@ref) when the score's variance on
-that functional is too large and the model exists as a live branchable world
-(ChronoSim via the extension, or any conforming framework). The
-manual page [Choosing an estimator](choosing.md) walks this decision with the
-package's own measured evidence.
+estimate, or, when the score's variance on that functional is too large and
+the model exists as a live branchable world (ChronoSim via the extension, or
+any conforming framework), to the two clone-based estimators:
+[`spa_gradient`](@ref) where its extra requirements hold (a pure model twin,
+value-`==` states, no mid-flight re-evaluation) and [`branching_gradient`](@ref)
+otherwise. The manual page [Choosing an estimator](choosing.md) walks this
+decision with the package's own measured evidence, and [Model and distribution
+requirements](requirements.md) is the checklist of what each estimator demands
+of a model's clock distributions.
 
 ## Manual
 
   * [Choosing an estimator](choosing.md) — the decision guide: what each
     estimator needs, where each is valid, and the pairing methodology, with
     measured numbers.
+  * [Model and distribution requirements](requirements.md) — the per-estimator
+    checklist of what each method demands of a model's clock distributions
+    (dual-safe quantiles, inversion sampling, positive hazard, no atoms) and
+    of its `fire`/state contract.
   * [Records and ingestion](records.md) — the `GradientRecord`: building it
     from a `TrajectoryRecorder` or from a bare firing trace, the coupling
     label, the enabling-time audit, and segment chains for state-dependent
     models.
   * [The branchable-world interface](branchable.md) — the nine-verb protocol
-    a framework implements to receive the branching estimator, with a worked
+    a framework implements to receive the branching and SPA estimators, with a worked
     adoption built on the raw sampler layer and the `check_branchable`
     conformance harness.
   * [Worked example](worked_example.md) — the machine-repair model end to

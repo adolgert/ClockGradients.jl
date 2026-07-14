@@ -96,7 +96,7 @@ paired_simulate_and_estimate
 ## The branchable-world protocol
 
 The nine duck-typed verbs a framework implements for its world type to receive
-the branching estimator (see [The branchable-world
+the branching and SPA estimators (see [The branchable-world
 interface](branchable.md)), and the conformance harness that certifies the
 semantic obligations. ChronoSim's `SimulationFSM` conforms through the
 ClockGradients–ChronoSim package extension.

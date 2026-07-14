@@ -2,3 +2,7 @@ docs/build/
 /Manifest.toml
 /docs/Manifest.toml
 /test/Manifest.toml
+
+# Planning scratch notes — deferred implementation work, not part of the manual
+/dual_safe_plan.md
+/spa_chronosim_plan.md

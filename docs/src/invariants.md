@@ -181,8 +181,23 @@ catch err
 end
 ```
 
-The score estimator has no such restriction — it differentiates log-densities,
-not quantiles — so a Gamma-clock model still gets score derivatives.
+The score estimator avoids the *quantile* wall — it differentiates
+log-densities, not `invlogccdf` — so a family whose quantile is not dual-safe
+but whose log-density is (a `Logistic` clock, say) gets score derivatives
+where IPA refuses it. But the score is not unconditional: it accumulates
+`logccdf` over every interval and `loghazard = logpdf − logccdf` at each
+firing under a dual `θ`, so it needs the family's **`logccdf` and `logpdf`
+both** to admit a `ForwardDiff.Dual`. `Gamma` fails this: its `logpdf`
+differentiates, but its `logccdf` routes through the StatsFuns internal
+`_gammalogccdf`, which has no dual method and throws a `MethodError`. So a
+`Gamma` clock whose differentiated parameter enters its survival term is out
+of reach for the score too — the permissiveness is over the quantile
+requirement, not a blanket exemption. Augmenting a family for the score means
+supplying a dual-differentiable `logccdf`/`loghazard`; augmenting one for IPA
+or SPA means a dual-safe `invlogccdf` *and* adding its type to
+`DUAL_SAFE_DISTRIBUTIONS` (the gate is a type whitelist, not a capability
+probe — even a closed-form `Logistic` quantile is refused until the type is
+listed).
 
 ## The one-captured-record closure rule
 

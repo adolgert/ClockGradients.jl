@@ -13,7 +13,7 @@ trajectory records it replays) and
 [ChronoSim.jl](https://github.com/adolgert/ChronoSim.jl) (whose live
 simulations it clones, through a package extension).
 
-Three estimator families share one record and one model contract:
+Four estimator families share one record and one model contract:
 
 * **Score function (likelihood ratio)** — `score_estimate`: unbiased for
   every path functional, runs entirely off recorded trajectories, higher
@@ -32,6 +32,21 @@ Three estimator families share one record and one model contract:
   any framework that implements the verbs gets the estimator. Unbiased for
   terminal-state functionals, at the cost of dozens of clones per
   replication.
+* **Smoothed perturbation analysis (SPA, Fu–Hu)** — `spa_gradient`: the same
+  event-order regime as branching, but conditioning rather than splitting —
+  the IPA term plus a hazard-weighted boundary term at event-order swaps and
+  at the observation horizon, each swap's jump priced by one coupled clone
+  pair. A criticality gate proves most swaps cannot move the functional and
+  spawns no clones for them, and the hazard weight measured ≈5× tighter in
+  variance×time than branching on the machine-repair count. Needs a live
+  branchable world plus a pure model twin, value-`==` states, and no
+  mid-flight clock re-evaluation.
+
+Each estimator constrains the *distributions* its model may use — dual-safe
+quantiles, an inversion sampler, strictly positive hazard for the hazard-based
+methods, no atoms. The manual's [Model and distribution
+requirements](https://computingkitchen.com/ClockGradients.jl/stable/requirements/)
+page collects those per-estimator limits in one table.
 
 The default validation mode is the **pairing**: `paired_estimate` runs score
 and IPA on the same records; a significant difference measures IPA's bias,
