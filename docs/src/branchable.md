@@ -4,14 +4,18 @@ CurrentModule = ClockGradients
 
 # The branchable-world interface
 
-The weak-derivative branching estimator ([`branching_gradient`](@ref)) cannot
-run from a recorded trajectory: forcing a firing changes which clocks are
-subsequently enabled, so only a *running world* can continue the
-counterfactual. But the estimator does not need any particular framework — it
-needs nine abstract capabilities. This page states those capabilities as a
+Two estimators cannot run from a recorded trajectory — the weak-derivative
+branching estimator ([`branching_gradient`](@ref)) and smoothed perturbation
+analysis ([`spa_gradient`](@ref)): both force firings, and forcing a firing
+changes which clocks are subsequently enabled, so only a *running world* can
+continue the counterfactual. But neither needs any particular framework — they
+need nine abstract capabilities. This page states those capabilities as a
 protocol, shows how a framework adopts it with a complete worked example built
 directly on the raw `CompetingClocks` sampler layer (no ChronoSim anywhere),
-and shows how [`check_branchable`](@ref) certifies an implementation.
+and shows how [`check_branchable`](@ref) certifies an implementation. A single
+conforming world type earns **both** estimators at once; a conforming world
+that additionally implements the optional tenth verb [`branch_schedule`](@ref)
+also unlocks SPA's `TruncatedHazard` weight strategy.
 
 The protocol is **duck-typed on purpose**: a world is branchable because the
 nine generic functions have methods for its type, not because it subtypes an

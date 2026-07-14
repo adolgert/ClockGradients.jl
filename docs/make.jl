@@ -27,6 +27,7 @@ makedocs(
         "Home" => "index.md",
         "Manual" => [
             "Choosing an estimator" => "choosing.md",
+            "Model and distribution requirements" => "requirements.md",
             "Records and ingestion" => "records.md",
             "The branchable-world interface" => "branchable.md",
             "Worked example" => "worked_example.md",

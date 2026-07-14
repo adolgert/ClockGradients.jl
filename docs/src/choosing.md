@@ -16,8 +16,16 @@ end.
 Throughout, a *record* is a [`GradientRecord`](@ref): one simulated
 trajectory flattened to its firing sequence plus the retained survival
 uniform behind each firing (see [Records and ingestion](records.md)). All
-three estimators target the same quantity, the derivative `∂θ E[f(X_θ)]` of
+four estimators target the same quantity, the derivative `∂θ E[f(X_θ)]` of
 an expected path functional with respect to the parameter vector `θ`.
+
+This page decides *which* estimator by functional and cost. The companion
+page [Model and distribution requirements](requirements.md) decides *whether*
+an estimator can run on a given model at all — the dual-safe quantile
+families, the inversion-sampling rule, the strictly-positive-hazard demand the
+branching estimator's `log Λ` imposes, and the structural demands SPA adds.
+Check that page before committing to an estimator whose `*Needs*` block below
+mentions a requirement your model might violate.
 
 ## The score-function estimator: unbiased everywhere, higher variance
 

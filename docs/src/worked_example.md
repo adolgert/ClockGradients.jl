@@ -8,10 +8,12 @@ This page runs one model through the whole package: define it on the
 five-function model contract, simulate it through the real CompetingClocks
 sampler with a recorder attached, estimate a derivative with the score
 estimator, with the pathwise (infinitesimal-perturbation-analysis, IPA)
-estimator, and with the two paired, and read the verdict. The final section
-estimates the same derivative with the weak-derivative branching estimator on
-the same model written as a ChronoSim simulation. Every code block on this
-page executes during the documentation build; the printed outputs are real.
+estimator, and with the two paired, and read the verdict. The last two sections
+estimate the same derivative with the two clone-based estimators — the
+weak-derivative branching estimator on the model written as a ChronoSim
+simulation, then smoothed perturbation analysis (SPA) on the packaged
+`ClockWorld`. Every code block on this page executes during the documentation
+build; the printed outputs are real.
 
 The model: `n = 5` machines each fail independently at rate `λ = θ[1]` while
 up. Failed machines join a first-in-first-out queue served by a single
@@ -332,13 +334,78 @@ same configuration measures `z = [1.01, 0.04]` against the oracle
 [branchable-world interface](branchable.md) page shows the same oracle
 reproduced through a world with no ChronoSim in it at all.
 
+## The SPA estimator, on the packaged world
+
+Smoothed perturbation analysis ([`spa_gradient`](@ref)) targets the same
+order-sensitive regime as branching but *conditions* instead of *splitting*:
+its estimate is the pathwise (IPA) term plus a hazard-weighted boundary term at
+each event-order swap. It needs the same live branchable world — the ChronoSim
+extension supplies a matching
+`spa_gradient(sim_factory, initializer, model, θ, fn)` convenience method, the
+SPA analogue of the branching call above — but here we run it through the
+packaged [`ClockWorld`](@ref), which turns the pure five-function model into a
+branchable world with no framework at all, so the model is its own twin.
+
+SPA's criticality gate decides which order swaps can move the functional by
+firing candidate pairs in both orders and comparing the resulting states, so it
+needs the model's state to compare by value. `MRState` carries arrays, whose
+default `==` is identity; defining it fieldwise lets the gate prove that
+fail/repair swaps re-coalesce and skip them without spawning clones (leave it
+undefined and SPA is still unbiased, just clone-wasteful):
+
+```@example worked
+Base.:(==)(a::MRState, b::MRState) =
+    a.up == b.up && a.queue == b.queue && a.nfail == b.nfail
+Base.hash(s::MRState, h::UInt) = hash(s.nfail, hash(s.queue, hash(s.up, h)))
+
+spa = spa_gradient(() -> ClockWorld(model, θ0; seed=3), model, θ0, failcount;
+                   nreps=500, horizon=horizon, seed=99)
+(estimate = spa.estimate, stderr = spa.stderr,
+ ipa_part = spa.ipa_part,
+ z_vs_oracle = [(spa.estimate[1] - oracle_dfail) / spa.stderr[1],
+                (spa.estimate[2] - oracle_dfail_μ) / spa.stderr[2]],
+ skip_fraction = spa.skip_fraction, clones_per_rep = spa.clones_per_rep)
+```
+
+The whole derivative lives in the boundary term — `ipa_part` is pinned at zero,
+exactly as the frozen-order pathwise replay must be on a terminal count — and
+SPA recovers both components of the oracle `[10.727, 3.568]`. The gate skipped a
+sizeable fraction of the candidate swaps (`skip_fraction`) without a single
+clone. At a comparable clone budget the per-epoch conditioning is tighter than
+branching's Hahn–Jordan split: the suite measures SPA's standard error 2.2–2.5×
+smaller than branching's on this functional (the ≈5× variance×time advantage).
+
+The default `HazardWeight` strategy makes every enabled non-winner a candidate.
+The optional [`TruncatedHazard`](@ref) strategy instead prices only the observed
+next event, through the tenth branchable verb [`branch_schedule`](@ref) — several
+times fewer clones at a wider standard error, a wall-clock tradeoff rather than a
+dominance:
+
+```@example worked
+spa_tr = spa_gradient(() -> ClockWorld(model, θ0; seed=3), model, θ0, failcount;
+                      nreps=500, horizon=horizon, seed=99,
+                      strategy=TruncatedHazard())
+(estimate = spa_tr.estimate,
+ clones_per_rep = spa_tr.clones_per_rep,
+ fraction_of_hazardweight_clones = spa_tr.clones_per_rep / spa.clones_per_rep)
+```
+
+Where the derivative is carried by a contended *first passage* rather than a
+count — the case IPA gets sign-wrong — SPA recovers the correct sign by the same
+boundary mechanism; [Choosing an estimator](choosing.md) and the
+[validity table](invariants.md) carry those measured numbers.
+
 ## What to take away
 
-The workflow is always the same three calls: declare the functional, simulate
+The workflow starts with the same three calls: declare the functional, simulate
 and ingest records once, and run [`paired_estimate`](@ref) (or its
 simulate-and-estimate driver). The verdict tells you whether the tight IPA
 number is trustworthy; where it is not, the score estimate on the very same
-records is unbiased, and branching — the one estimator that needs the live
-world — covers the order-sensitive functionals whose score variance is too
-large. The full validity map, with the measured evidence, is the
-[validity table](invariants.md).
+records is unbiased, and the two clone-based estimators — which need the live
+world, not a record — cover the order-sensitive functionals whose score
+variance is too large: SPA where its extra requirements hold (a pure model
+twin, value-`==` states, no mid-flight re-evaluation) and branching otherwise.
+The full validity map, with the measured evidence, is the
+[validity table](invariants.md); [Model and distribution
+requirements](requirements.md) is the checklist of what each estimator demands
+of a model's clock distributions.
