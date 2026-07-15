@@ -98,6 +98,7 @@ export ClockWorld
 # The smoothed-perturbation-analysis (SPA) estimator and its weight strategies.
 export spa_gradient, HazardWeight, TruncatedHazard
 
+include("phase0_instrument.jl")   # Phase 0 instrumentation; must precede the estimators
 include("hazards.jl")
 include("model.jl")
 include("records.jl")
