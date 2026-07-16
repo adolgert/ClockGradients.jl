@@ -261,6 +261,96 @@ function check_branchable(world_factory::Function, θ::AbstractVector;
 end
 
 """
+    check_enabled_update(model, θ; nsteps=200, npaths=10, seed=0xC0FFEE) -> NamedTuple
+
+Exercise the optional incremental contract ([`fire_changes`](@ref) /
+[`enabled_update`](@ref)) against the full recomputation, in the same
+report-not-throw style as [`check_branchable`](@ref). It walks `npaths` random
+trajectories of at most `nsteps` firings each (choosing the next key uniformly
+from the model's own enabled set with a seeded RNG), and after every fire checks
+that the incremental step agrees with a fresh full recompute.
+
+The returned `NamedTuple` has one `Bool` per obligation, an aggregate, and
+diagnostics:
+
+  * `matches_full` — after every fire, `enabled_update(model, s', k, prev,
+    changed)` equals `enabled(model, s')`, element for element and in order.
+  * `pure` — `enabled_update` does not mutate `prev` (a deep copy taken before
+    the call still compares equal afterward), and two calls from the same
+    arguments agree.
+  * `fire_agrees` — `first(fire_changes(model, s, k)) == fire(model, s, k)`.
+  * `pass` — the conjunction of the above.
+  * `steps_checked` — how many fires were exercised across all paths.
+  * `diagnostics::Vector{String}` — one message per failure, naming the first
+    failing path, step, and key.
+
+Because it speaks only the model contract — never anything framework-specific —
+any substrate that implements the contract can be run through it unchanged; it
+is the conformance test the later incremental-twin work reuses.
+"""
+function check_enabled_update(model, θ; nsteps::Integer=200, npaths::Integer=10,
+                              seed::Integer=0xC0FFEE)
+    diags = String[]
+    matches_full = true
+    pure = true
+    fire_agrees = true
+    steps_checked = 0
+    rng = Xoshiro(seed)
+
+    for path in 1:npaths
+        s = initial_state(model)
+        prev = enabled(model, s)
+        for step in 1:nsteps
+            isempty(prev) && break
+            k = prev[rand(rng, 1:length(prev))]
+
+            # fire_changes must agree with fire on the new state.
+            (snew, changed) = fire_changes(model, s, k)
+            sfire = fire(model, s, k)
+            if !(snew == sfire)
+                fire_agrees = false
+                push!(diags,
+                    "fire_agrees: path $path step $step key $k: " *
+                    "first(fire_changes) disagrees with fire")
+            end
+
+            # Purity: snapshot prev, run enabled_update twice, compare.
+            prev_before = deepcopy(prev)
+            upd = enabled_update(model, snew, k, prev, changed)
+            upd2 = enabled_update(model, snew, k, prev, changed)
+            if !(prev == prev_before)
+                pure = false
+                push!(diags,
+                    "pure: path $path step $step key $k: enabled_update mutated " *
+                    "its prev argument")
+            end
+            if !(upd == upd2)
+                pure = false
+                push!(diags,
+                    "pure: path $path step $step key $k: two enabled_update calls " *
+                    "from the same arguments disagreed ($upd vs $upd2)")
+            end
+
+            # The core obligation: equal to a fresh full recompute, in order.
+            full = enabled(model, snew)
+            if !(upd == full && collect(upd) == collect(full))
+                matches_full = false
+                push!(diags,
+                    "matches_full: path $path step $step key $k: " *
+                    "enabled_update = $(collect(upd)) but enabled = $(collect(full))")
+            end
+
+            steps_checked += 1
+            s = snew
+            prev = upd
+        end
+    end
+
+    pass = matches_full && pure && fire_agrees
+    return (; pass, matches_full, pure, fire_agrees, steps_checked, diagnostics=diags)
+end
+
+"""
     capability_report(model, θ; probe_horizon, probe_seeds) -> NamedTuple
 
 Diagnose which ESTIMATOR TIERS one model supports, in the style of

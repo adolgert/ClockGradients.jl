@@ -50,6 +50,7 @@ export loghazard, hazard, conditional_remaining
 # The GSMP model contract (five extendable generic functions + the replay
 # channel). Downstream models add methods to these.
 export initial_state, clockkeytype, enabled, clock_distribution, fire
+export fire_changes, enabled_update
 export sync_enabling_times!
 
 # Records: the flattened trajectory the estimators replay, and its builders.
@@ -79,6 +80,7 @@ export PairedGradient, paired_estimate, paired_simulate_and_estimate
 export branch_peek, branch_commit!, branch_force!, branch_clone, branch_rekey!,
     branch_time, branch_enabled_ages, branch_clock_distribution, branch_state
 export check_branchable
+export check_enabled_update
 # The capability-tier diagnosis: a generic function with no core methods; a
 # framework's package extension attaches one method per model type it can
 # diagnose (the core deliberately never names any framework).
