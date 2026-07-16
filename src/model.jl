@@ -130,9 +130,9 @@ full [`enabled`](@ref) recomputation. The default is exactly that fallback, so a
 model that defines only `fire` keeps working unchanged.
 
 A model that implements the incremental form returns from `changed` whatever its
-`enabled_update` needs (for the ChronoSim-derived twin, the set of modified place
-addresses the firing already computes). The core never inspects `changed`; it
-only threads it from here into `enabled_update`.
+`enabled_update` needs (for a framework-derived twin, typically the set of
+modified place addresses the firing already computes). The core never inspects
+`changed`; it only threads it from here into `enabled_update`.
 """
 fire_changes(model, state, key) = (fire(model, state, key), nothing)
 
