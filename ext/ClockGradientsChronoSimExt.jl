@@ -116,6 +116,38 @@ end
 
 ClockGradients.branch_state(sim::SimulationFSM) = sim.physical
 
+# The world's clock-key type is the third type parameter of the SimulationFSM.
+# Reading it off the type is public identity, not a reach into private state.
+_world_keytype(::SimulationFSM{S,Sa,CK,P}) where {S,Sa,CK,P} = CK
+
+# Repair A: a GsmpModel twin keys clocks by event instances, so it must be
+# paired with an instance-keyed world. The generic method does nothing; the
+# GsmpModel method refuses a mismatched world with an actionable message naming
+# event_key_union, thrown at world construction (before any peek or audit).
+_check_derived_key_vocabulary(sim, model) = nothing
+function _check_derived_key_vocabulary(sim::SimulationFSM, model::GsmpModel)
+    world_key = _world_keytype(sim)
+    model_key = ChronoSim.model_keytype(model)
+    world_key == model_key && return nothing
+    throw(ArgumentError(
+        "the world keys clocks by `$(world_key)` but the derived model twin " *
+        "keys them by event instances (`$(model_key)`); build the SimulationFSM " *
+        "with key_type=ChronoSim.event_key_union(...) over the model's event " *
+        "types so the world and the twin speak the same vocabulary."))
+end
+
+# The SPA commuting gate compares two folded states by value:
+# `fire(model, s1, cand) == fire(model, s2, ekey)`. `@keyedby` generates a
+# fieldwise `==` for element structs, but `@observedphysical` does NOT generate
+# one for the top-level state, so a derived-twin state would fall back to
+# identity `===` and the gate would never skip a commuting pair (unbiased but
+# clone-wasteful; clone_requirements §2.7 flags this as a silent failure). Bridge
+# it to the notify-free structural equality `verify_clone` already uses, so a
+# derived twin's gate skips exactly the pairs a hand-written twin's does.
+Base.:(==)(a::ChronoSim.ObservedState.ObservedPhysical,
+           b::ChronoSim.ObservedState.ObservedPhysical) =
+    ChronoSim.ObservedState._state_equal(a, b)
+
 # The optional tenth verb. The context-level getindex (CompetingClocks 0.4.1)
 # reports an enabled clock's scheduled firing time, so the schedule is the
 # enabled-ages key set annotated with stored times — still no reach past the
@@ -829,6 +861,7 @@ function ClockGradients.spa_gradient(sim_factory::Function, initializer, model,
     world_factory = function ()
         sim = sim_factory()
         ChronoSim.initialize!(InitializeEvent(), initializer, sim)
+        _check_derived_key_vocabulary(sim, model)
         return sim
     end
     return spa_gradient(world_factory, model, θ, fn; kwargs...)

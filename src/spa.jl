@@ -293,6 +293,23 @@ function _spa_update_enabled!(enabled_at::Dict, enab_state::Dict, model, s_pre, 
     snew
 end
 
+# A framework-agnostic vocabulary guard, checked once per replication at the
+# first peek. The estimator passes world keys straight into the twin (`fire`,
+# `clock_distribution`, the enabled-set bookkeeping), so if the world speaks a
+# different key vocabulary than the twin declares, everything downstream is
+# wrong. One `isa` per replication replaces the confusing epoch-1 audit dump
+# with a message that names the actual problem, and it protects every world
+# type — including future adapters for other frameworks and a hand-written twin
+# paired with the wrong world. It never names any framework.
+function _spa_check_key_vocabulary(K::Type, key)
+    key isa K && return nothing
+    throw(ArgumentError(
+        "clock-key vocabulary mismatch: the world reports clock keys of type " *
+        "$(typeof(key)) but the pure model twin declares clockkeytype = $K. " *
+        "The world and the twin must speak the same key vocabulary; rebuild " *
+        "the world with the twin's key type."))
+end
+
 # The model-twin audit. A framework world is not built from the pure model the
 # estimator replays; if the twin's `enabled` rule disagrees with the live
 # world, every downstream quantity (record, replay, gates, weights) is silently
@@ -342,6 +359,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
         (tk, ekey) = pk
         tk <= horizon || break
         k = length(keys_tr) + 1
+        k == 1 && _spa_check_key_vocabulary(K, ekey)
         s_pre = s_twin
         tnow = branch_time(w)
         agepairs = branch_enabled_ages(w)
