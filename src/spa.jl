@@ -51,18 +51,22 @@
 # in the boundary term.
 
 """
-    commuting_pair(model, s_pre, ekey, cand) -> Bool
+    commuting_pair(model, s_pre, en_pre, ekey, cand) -> Bool
 
 True when firing `ekey` then `cand` from `s_pre` reaches the same state as
 firing them in the opposite order, with both events surviving to fire in both
-orders. Relies on `fire` being pure and on value `==` for the model's state
+orders. `en_pre` is the enabled set of `s_pre`, threaded so the intermediate
+enabled sets can be maintained incrementally (`enabled_update`) rather than
+recomputed. Relies on `fire` being pure and on value `==` for the model's state
 type — a soft contract demand beyond the branchable verbs.
 """
-function commuting_pair(model, s_pre, ekey, cand)
-    s1 = fire(model, s_pre, ekey)
-    cand in enabled(model, s1) || return false
-    s2 = fire(model, s_pre, cand)
-    ekey in enabled(model, s2) || return false
+function commuting_pair(model, s_pre, en_pre, ekey, cand)
+    (s1, ch1) = fire_changes(model, s_pre, ekey)
+    en1 = enabled_update(model, s1, ekey, en_pre, ch1)
+    cand in en1 || return false
+    (s2, ch2) = fire_changes(model, s_pre, cand)
+    en2 = enabled_update(model, s2, cand, en_pre, ch2)
+    ekey in en2 || return false
     fire(model, s1, cand) == fire(model, s2, ekey)
 end
 
@@ -72,7 +76,7 @@ prefix_settles(fn::PathFunctional, hit_already::Bool) = false
 prefix_settles(fn::FirstPassageTime, hit_already::Bool) = hit_already
 
 """
-    zero_jump_certified(fn, model, s_pre, ekey, cand) -> Bool
+    zero_jump_certified(fn, model, s_pre, en_pre, ekey, cand) -> Bool
 
 True when the swap's jump is PROVABLY zero for this functional. For a terminal
 or time-integral functional, state commuting suffices: the pair's intermediate
@@ -84,13 +88,14 @@ states. Fu & Hu's commuting corollary is stated for time-integral performance;
 this is where the hitting class genuinely needs more, and the machine-repair
 first-passage test pins it: gating on state commuting alone erases the
 near-threshold fail/repair swaps that carry the entire order derivative (the
-sign-flip regime).
+sign-flip regime). `en_pre` is the enabled set of `s_pre`, threaded into the
+commuting check for incremental enabled-set maintenance.
 """
-zero_jump_certified(fn::PathFunctional, model, s_pre, ekey, cand) =
-    commuting_pair(model, s_pre, ekey, cand)
+zero_jump_certified(fn::PathFunctional, model, s_pre, en_pre, ekey, cand) =
+    commuting_pair(model, s_pre, en_pre, ekey, cand)
 
-function zero_jump_certified(fn::FirstPassageTime, model, s_pre, ekey, cand)
-    commuting_pair(model, s_pre, ekey, cand) || return false
+function zero_jump_certified(fn::FirstPassageTime, model, s_pre, en_pre, ekey, cand)
+    commuting_pair(model, s_pre, en_pre, ekey, cand) || return false
     fn.pred(fire(model, s_pre, ekey)) == fn.pred(fire(model, s_pre, cand))
 end
 
@@ -161,7 +166,7 @@ end
 # functional layer already spans terminal/integral/first-passage; only the
 # branching estimator's driver reads terminal state alone. NaN = censored
 # first passage.
-function _spa_forced_value(fn::PathFunctional, model, s_pre, preclone, first_key,
+function _spa_forced_value(fn::PathFunctional, model, s_pre, en_pre, preclone, first_key,
                            second_key, tk::Float64, seed::UInt64,
                            prefix_keys::Vector, prefix_times::Vector{Float64},
                            horizon::Float64, fpt_budget::Int)
@@ -171,11 +176,12 @@ function _spa_forced_value(fn::PathFunctional, model, s_pre, preclone, first_key
     forced_keys = K[first_key]
     forced_times = Float64[tk]
     branch_force!(cl, first_key, tk)
-    s_twin = fire(model, s_pre, first_key)
+    (s_twin, ch) = fire_changes(model, s_pre, first_key)
     # A first passage hit by the FIRST forced firing is decided at tk whatever
     # the second firing does (first hit, not last), so check between forces.
     fn isa FirstPassageTime && fn.pred(s_twin) && return tk
-    if second_key in enabled(model, s_twin)
+    en1 = enabled_update(model, s_twin, first_key, en_pre, ch)
+    if second_key in en1
         branch_force!(cl, second_key, tk)
         push!(forced_keys, second_key)
         push!(forced_times, tk)
@@ -195,14 +201,14 @@ end
 # One coupled clone-pair estimate of L(PP) − L(DNP) for (winner ekey,
 # candidate ckey) at decision time tk, from the twin pre-state s_pre. NaN when
 # either side censored.
-function _spa_clone_jump(fn::PathFunctional, model, s_pre, preclone, ekey, ckey,
+function _spa_clone_jump(fn::PathFunctional, model, s_pre, en_pre, preclone, ekey, ckey,
                          tk::Float64, est_rng::AbstractRNG, prefix_keys::Vector,
                          prefix_times::Vector{Float64}, horizon::Float64,
                          fpt_budget::Int)
     seedk = rand(est_rng, UInt64)
-    l_dnp = _spa_forced_value(fn, model, s_pre, preclone, ekey, ckey, tk, seedk,
+    l_dnp = _spa_forced_value(fn, model, s_pre, en_pre, preclone, ekey, ckey, tk, seedk,
                               prefix_keys, prefix_times, horizon, fpt_budget)
-    l_pp = _spa_forced_value(fn, model, s_pre, preclone, ckey, ekey, tk, seedk,
+    l_pp = _spa_forced_value(fn, model, s_pre, en_pre, preclone, ckey, ekey, tk, seedk,
                              prefix_keys, prefix_times, horizon, fpt_budget)
     return l_pp - l_dnp
 end
@@ -271,10 +277,11 @@ _horizon_jump(fn::PathFunctional, model, s_end, key) = 0.0
 # own `enable_step` covers only clocks that eventually FIRE; a boundary
 # candidate that never fires exists only here — state the estimator owns
 # because nothing else provides it.
-function _spa_update_enabled!(enabled_at::Dict, enab_state::Dict, model, s_pre, fired, k::Int)
-    old = enabled(model, s_pre)
-    snew = fire(model, s_pre, fired)
-    newk = enabled(model, snew)
+function _spa_update_enabled!(enabled_at::Dict, enab_state::Dict, model, s_pre,
+                              en_pre, fired, k::Int)
+    old = en_pre
+    (snew, ch) = fire_changes(model, s_pre, fired)
+    newk = enabled_update(model, snew, fired, en_pre, ch)
     delete!(enabled_at, fired)
     delete!(enab_state, fired)
     for kk in old
@@ -290,7 +297,7 @@ function _spa_update_enabled!(enabled_at::Dict, enab_state::Dict, model, s_pre, 
             enab_state[kk] = snew
         end
     end
-    snew
+    return (snew, newk)
 end
 
 # A framework-agnostic vocabulary guard, checked once per replication at the
@@ -339,8 +346,9 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
     St = typeof(s0)
     keys_tr = K[]
     times_tr = Float64[]
-    enabled_at = Dict{K,Int}(k => 0 for k in enabled(model, s0))
-    enab_state = Dict{K,St}(k => s0 for k in enabled(model, s0))
+    en0 = enabled(model, s0)
+    enabled_at = Dict{K,Int}(k => 0 for k in en0)
+    enab_state = Dict{K,St}(k => s0 for k in en0)
     cands = _SpaCandidate{K,St}[]
     ncand = 0
     nskip = 0
@@ -352,6 +360,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
     # the pure model's, and the estimator's whole state logic lives in the
     # model. The live world contributes keys, times, clones, and streams.
     s_twin = s0
+    en_twin = en0
 
     while true
         pk = branch_peek(w)
@@ -361,6 +370,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
         k = length(keys_tr) + 1
         k == 1 && _spa_check_key_vocabulary(K, ekey)
         s_pre = s_twin
+        en_pre = en_twin
         tnow = branch_time(w)
         agepairs = branch_enabled_ages(w)
         _spa_twin_audit(enabled_at, agepairs, k)
@@ -375,7 +385,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
             else
                 preclone === nothing && (preclone = branch_clone(w))
                 nclones += 2
-                _spa_clone_jump(fn, model, s_pre, preclone, ekey, ckey, tk, est_rng,
+                _spa_clone_jump(fn, model, s_pre, en_pre, preclone, ekey, ckey, tk, est_rng,
                                 keys_tr, times_tr, horizon, fpt_budget)
             end
         end
@@ -387,7 +397,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
             for (ckey, _) in agepairs
                 ckey == ekey && continue
                 ncand += 1
-                if prefix_settles(fn, hit_already) || zero_jump_certified(fn, model, s_pre, ekey, ckey)
+                if prefix_settles(fn, hit_already) || zero_jump_certified(fn, model, s_pre, en_pre, ekey, ckey)
                     nskip += 1
                     continue
                 end
@@ -406,7 +416,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
                 # already enabled BEFORE e_k fired.
                 if haskey(age_at_tk, cnext) && cnext != ekey
                     ncand += 1
-                    if prefix_settles(fn, hit_already) || zero_jump_certified(fn, model, s_pre, ekey, cnext)
+                    if prefix_settles(fn, hit_already) || zero_jump_certified(fn, model, s_pre, en_pre, ekey, cnext)
                         nskip += 1
                     else
                         sched = branch_schedule(w)   # post-commit; first entry is cnext
@@ -419,7 +429,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
 
         push!(keys_tr, ekey)
         push!(times_tr, tk)
-        s_twin = _spa_update_enabled!(enabled_at, enab_state, model, s_pre, ekey, k)
+        (s_twin, en_twin) = _spa_update_enabled!(enabled_at, enab_state, model, s_pre, en_pre, ekey, k)
         if fn isa FirstPassageTime && !hit_already && fn.pred(s_twin)
             hit_already = true
             break   # the record past the hit carries no more information

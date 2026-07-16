@@ -432,3 +432,34 @@ testset_if("spa: the derived twin drives spa_gradient through an instance-keyed 
     @test res.ipa_part == [0.0, 0.0]
     @test res.skip_fraction > 0.0
 end
+
+# A twin that delegates the five contract functions to a GsmpModel but
+# deliberately NOT fire_changes/enabled_update, so it runs the contract DEFAULTS
+# (full enabled recompute) through the reworked SPA call sites. Comparing it
+# against the GsmpModel proves the incremental maintenance is pure bookkeeping.
+struct FallbackTwin{M}
+    inner::M
+end
+ClockGradients.initial_state(t::FallbackTwin) = ClockGradients.initial_state(t.inner)
+ClockGradients.clockkeytype(t::FallbackTwin) = ClockGradients.clockkeytype(t.inner)
+ClockGradients.enabled(t::FallbackTwin, s) = ClockGradients.enabled(t.inner, s)
+ClockGradients.clock_distribution(t::FallbackTwin, θ::AbstractVector, key, state) =
+    ClockGradients.clock_distribution(t.inner, θ, key, state)
+ClockGradients.fire(t::FallbackTwin, s, key) = ClockGradients.fire(t.inner, s, key)
+
+testset_if("spa: the derived-twin estimate is unchanged by incremental maintenance at a fixed seed") do
+    dm = _branch_derived_model()
+    fn = ClockGradients.TerminalObservable(s -> s.nfail)
+    inc = spa_gradient(branch_sim_factory_instance, BranchRepairModel.repair_initializer,
+                       dm, _BR_θ, fn; nreps=400, horizon=_BR_T, seed=2027)
+    fb = spa_gradient(branch_sim_factory_instance, BranchRepairModel.repair_initializer,
+                      FallbackTwin(dm), _BR_θ, fn; nreps=400, horizon=_BR_T, seed=2027)
+    # Bit-identical: incremental maintenance is bookkeeping, not a new algorithm.
+    @test inc.estimate == fb.estimate
+    @test inc.stderr == fb.stderr
+    @test inc.ipa_part == fb.ipa_part
+    @test inc.boundary_part == fb.boundary_part
+    @test inc.clones_per_rep == fb.clones_per_rep
+    @test inc.candidates_per_rep == fb.candidates_per_rep
+    @test inc.skip_fraction == fb.skip_fraction
+end
