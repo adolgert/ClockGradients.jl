@@ -39,7 +39,7 @@ using CompetingClocks: SamplingContext, SamplerBuilder,
     with_recorder, close_record!, recorded_firings,
     TrajectoryRecorder, ClockFiredRecord
 using Distributions: UnivariateDistribution, Exponential, Weibull, LogNormal,
-    logpdf, logccdf, invlogccdf, partype, pdf, cdf, ccdf
+    logpdf, logccdf, invlogccdf, partype, pdf, cdf, ccdf, shape, scale
 using ForwardDiff: ForwardDiff
 using Random: AbstractRNG, Xoshiro
 using Statistics: mean, std

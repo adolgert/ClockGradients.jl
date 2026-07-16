@@ -30,6 +30,43 @@ ratio.
 """
 hazard(d::UnivariateDistribution, t::Real) = exp(loghazard(d, t))
 
+# Weibull hazard at age exactly 0 needs a closed-form branch. The generic
+# log-domain path computes `(κ-1)·log(t/η)` at `t = 0`, which is `(κ-1)·(-Inf)`;
+# for a shape `κ > 1` this is `-Inf` and exponentiates to the correct value 0, but
+# under ForwardDiff the dual carried through `log(0)` produces a `0·Inf`/`Inf−Inf`
+# NaN in the derivative even though the true derivative is finite. The branching
+# estimator's horizon-censoring term differentiates the hazard of a just-enabled
+# clock at age exactly 0, so that NaN turns any Weibull-with-shape gradient into a
+# NaN. We return the exact limit, constructing the result so the ForwardDiff dual
+# types of the parameters propagate.
+#
+#   h(t) = (κ/η)·(t/η)^(κ-1),   so at t = 0:
+#     κ > 1 : h(0) = 0        (and 0 for every η, so ∂/∂η = ∂/∂κ = 0)
+#     κ = 1 : h(0) = 1/η      (∂/∂η = -1/η²; constant in age)
+#     κ < 1 : h(0) = +Inf     (a genuine divergence, deliberately left to the
+#                              generic path so the value is unchanged)
+# Whether the *age* is zero, judged by its primal value. `iszero` on a
+# ForwardDiff dual is false whenever any partial is nonzero (e.g. `Dual(0.0, 1.0)`
+# while differentiating with respect to the age itself), so we peel the dual down
+# to its real value before testing.
+_age_is_zero(t::Real) = iszero(t)
+_age_is_zero(t::ForwardDiff.Dual) = _age_is_zero(ForwardDiff.value(t))
+
+function hazard(d::Weibull, t::Real)
+    if _age_is_zero(t)
+        κ = shape(d)
+        η = scale(d)
+        if κ > 1
+            # zero of the parameter type: 0.0, or a dual with all-zero partials.
+            return zero(κ / η)
+        elseif κ == 1
+            return one(κ) / η
+        end
+        # κ < 1 falls through: the hazard genuinely diverges at t = 0.
+    end
+    exp(loghazard(d, t))
+end
+
 """
     conditional_remaining(d, age, u) -> Real
 
