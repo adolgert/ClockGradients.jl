@@ -122,6 +122,9 @@ function repair_initializer(physical, when, rng)
     for i in eachindex(physical.machine)
         physical.machine[i].up = true
     end
+    physical.nfail = 0
+    physical.head = 0
+    empty!(physical.order)
     return nothing
 end
 
