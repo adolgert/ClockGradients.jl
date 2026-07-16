@@ -250,6 +250,22 @@ end
 
 ClockGradients.clockkeytype(model::GsmpModel) = ChronoSim.model_keytype(model)
 
+# Repair B carrier: an enabled set that additionally carries the read-dependency
+# bookkeeping the incremental step needs. `keys` is the enabled key vector sorted
+# by model_key_order (so it compares == a plain Vector and every existing
+# consumer that only iterates/indexes/membership-tests it is unaffected). `deps`
+# maps each enabled key to its precondition's read-set (place addresses), and
+# `watchers` is the reverse index: a changed place -> the enabled keys that read
+# it. `K` is the model's instance-key union; addresses are the place tuples
+# ChronoSim uses everywhere.
+struct DerivedEnabledSet{K} <: AbstractVector{K}
+    keys::Vector{K}
+    deps::Dict{K,Vector{Tuple}}
+    watchers::Dict{Tuple,Set{K}}
+end
+Base.size(e::DerivedEnabledSet) = size(e.keys)
+Base.getindex(e::DerivedEnabledSet, i::Int) = e.keys[i]
+
 # The derived enabled set: the same candidate generation the engine performs at
 # time zero ("everything changed"), reduced to the timed families and the
 # preconditions that hold in `state`. Immediate events fire within a composite
@@ -257,24 +273,37 @@ ClockGradients.clockkeytype(model::GsmpModel) = ChronoSim.model_keytype(model)
 # the same exclusion the engine applies. Deduplication is needed because one
 # event is typically proposed by several watched addresses; the final sort by
 # model_key_order makes the order deterministic by construction (and identical
-# to sorting the engine's own enabled-key set the same way).
+# to sorting the engine's own enabled-key set the same way). Each ENABLED
+# candidate's precondition runs inside capture_state_reads so its read-set is
+# recorded into deps/watchers for the incremental enabled_update.
 function ClockGradients.enabled(model::GsmpModel, state)
     gens = _gsmp_generators(model)
     K = ChronoSim.model_keytype(model)
     out = Vector{K}()
     seen = Set{K}()
+    deps = Dict{K,Vector{Tuple}}()
+    watchers = Dict{Tuple,Set{K}}()
     ChronoSim.over_generated_events(
         gens["timed"], state, nothing, ChronoSim.all_addresses(state),
     ) do candidate
         ChronoSim.isimmediate(typeof(candidate)) && return nothing
-        if !(candidate in seen) && ChronoSim.precondition(candidate, state)
+        candidate in seen && return nothing
+        reads_result = ChronoSim.capture_state_reads(state) do
+            ChronoSim.precondition(candidate, state)
+        end
+        if reads_result.result
             push!(seen, candidate)
             push!(out, candidate)
+            rd = collect(Tuple, reads_result.reads)
+            deps[candidate] = rd
+            for p in rd
+                push!(get!(() -> Set{K}(), watchers, p), candidate)
+            end
         end
         return nothing
     end
     sort!(out; order=ChronoSim.model_key_order(model))
-    return out
+    return DerivedEnabledSet{K}(out, deps, watchers)
 end
 
 # The θ seam, derived: the clock key IS the event instance, so the distribution
@@ -326,7 +355,12 @@ end
 # `when` does not exist in the contract, so the user fire! receives 0.0; a
 # fire! that READS its `when` argument into the state is outside the derived
 # contract's state-fold semantics (its states would depend on firing times).
-function ClockGradients.fire(model::GsmpModel, state, key)
+#
+# `_derived_fire` is the shared body: it returns the new state AND the write-set
+# it already computes (the OrderedSet of modified place addresses, user fire!
+# plus the whole immediate cascade). `fire` discards the changes; `fire_changes`
+# returns them for the incremental enabled_update.
+function _derived_fire(model::GsmpModel, state, key)
     gens = _gsmp_generators(model)
     work = ChronoSim.ObservedState.clone(state)
     crng = ChronoSim.CountingRNG(Xoshiro(0))
@@ -361,8 +395,103 @@ function ClockGradients.fire(model::GsmpModel, state, key)
             "record its draws or model the outcome as competing events to use " *
             "the record-replay estimators."))
     end
-    return work
+    return (work, changed)
 end
+
+ClockGradients.fire(model::GsmpModel, state, key) = first(_derived_fire(model, state, key))
+
+ClockGradients.fire_changes(model::GsmpModel, state, key) = _derived_fire(model, state, key)
+
+# The incremental enabled-set step. Mirrors the enable/disable half of the
+# engine's `deal_with_changes` against the pure state, using the carried
+# read-dependency index in place of the engine's dependency network. Sound by
+# the standard incremental-computation argument: a key whose recorded read-set
+# names no changed place would re-run its precondition down the same path to the
+# same value, so it may be skipped; a key that becomes newly enabled must be
+# proposed by some generator reacting to the fired key or a changed place, which
+# is ChronoSim's own generator-coverage condition.
+function ClockGradients.enabled_update(model::GsmpModel, new_state, fired_key,
+                                       prev::DerivedEnabledSet{K}, changed) where {K}
+    changed === nothing && return ClockGradients.enabled(model, new_state)
+    gens = _gsmp_generators(model)
+    ord = ChronoSim.model_key_order(model)
+
+    # Copy-on-write (purity: the commuting gate reuses one `prev` for two
+    # branches). The keys vector and the two dicts are shallow-copied; `deps`
+    # values are only ever replaced whole, so sharing them is safe, but a
+    # `watchers` Set must be copied before it is mutated.
+    keys = copy(prev.keys)
+    deps = copy(prev.deps)
+    watchers = copy(prev.watchers)
+    touched = Set{Tuple}()
+    watcher_set(p) = begin
+        if !(p in touched)
+            watchers[p] = haskey(watchers, p) ? copy(watchers[p]) : Set{K}()
+            push!(touched, p)
+        end
+        watchers[p]
+    end
+
+    # The re-check set: the disabling side (keys watching a changed place) plus
+    # the enabling side (generator proposals reacting to the fired key and the
+    # changed places). A deterministic processing order makes the stored `deps`
+    # reproducible run to run.
+    recheck = Set{K}()
+    for p in changed
+        haskey(watchers, p) || continue
+        for kk in watchers[p]
+            push!(recheck, kk)
+        end
+    end
+    ChronoSim.over_generated_events(gens["timed"], new_state, fired_key, changed) do candidate
+        ChronoSim.isimmediate(typeof(candidate)) && return nothing
+        push!(recheck, candidate)
+        return nothing
+    end
+
+    for cand in sort!(collect(recheck); order=ord)
+        reads_result = ChronoSim.capture_state_reads(new_state) do
+            ChronoSim.precondition(cand, new_state)
+        end
+        holds = reads_result.result
+        was = haskey(deps, cand)
+        if was && !holds
+            idx = searchsortedfirst(keys, cand; order=ord)
+            (idx <= length(keys) && keys[idx] == cand) && deleteat!(keys, idx)
+            for p in deps[cand]
+                delete!(watcher_set(p), cand)
+            end
+            delete!(deps, cand)
+        elseif was && holds
+            reads = collect(Tuple, reads_result.reads)
+            if reads != deps[cand]
+                for p in deps[cand]
+                    delete!(watcher_set(p), cand)
+                end
+                for p in reads
+                    push!(watcher_set(p), cand)
+                end
+                deps[cand] = reads
+            end
+        elseif !was && holds
+            reads = collect(Tuple, reads_result.reads)
+            idx = searchsortedfirst(keys, cand; order=ord)
+            insert!(keys, idx, cand)
+            deps[cand] = reads
+            for p in reads
+                push!(watcher_set(p), cand)
+            end
+        end
+        # !was && !holds: nothing to do.
+    end
+
+    return DerivedEnabledSet{K}(keys, deps, watchers)
+end
+
+# Safety net: any other prev_enabled shape (a hand-written twin's plain Vector,
+# say) falls back to the full scan.
+ClockGradients.enabled_update(model::GsmpModel, new_state, fired_key, prev, changed) =
+    ClockGradients.enabled(model, new_state)
 
 # --- record conversion + the model-value driver --------------------------------
 
