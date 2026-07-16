@@ -57,23 +57,23 @@ clockkeytype(::MachineRepair) = Tuple{Symbol,Int}
 function enabled(m::MachineRepair, s::MRState)
     ks = Tuple{Symbol,Int}[]
     for i in 1:m.nmachines
-        s.up[i] && push!(ks, (:fail, i))
+        s.up[i] && push!(ks, (:Fail, i))
     end
-    isempty(s.queue) || push!(ks, (:repair, s.queue[1]))
+    isempty(s.queue) || push!(ks, (:Repair, s.queue[1]))
     ks
 end
 
 # θ = [λ, μ]. Distributions.Exponential takes the MEAN, so rate λ is
 # Exponential(1/λ); `one(eltype(θ))` carries a dual θ's element type through.
 clock_distribution(::MachineRepair, θ, key::Tuple{Symbol,Int}) =
-    key[1] === :fail ? Exponential(one(eltype(θ)) / θ[1]) :
+    key[1] === :Fail ? Exponential(one(eltype(θ)) / θ[1]) :
                        Exponential(one(eltype(θ)) / θ[2])
 
 # Pure: returns a fresh state, never mutates its argument.
 function fire(::MachineRepair, s::MRState, key::Tuple{Symbol,Int})
     up, queue, nfail = copy(s.up), copy(s.queue), s.nfail
     kind, i = key
-    if kind === :fail
+    if kind === :Fail
         up[i] = false
         push!(queue, i)
         nfail += 1
@@ -215,13 +215,18 @@ higher-variance estimate survives the pairing — the weak-derivative branching
 estimator gives an unbiased alternative. It needs a live simulation, not a
 record: the same machine-repair model is written as a ChronoSim model, with
 the failure counter carried in the physical state so the functional is a
-terminal-state read. The estimator itself only speaks the
-[branchable-world interface](branchable.md); the ClockGradients–ChronoSim
-extension makes the `SimulationFSM` conform and supplies the
-`(sim_factory, initializer)` convenience method used below. (This mirrors the
-model in the package's `test/test_branching.jl`; see ChronoSim's manual for
-the event system and its "Cloning and branching" page for the capabilities
-the adapter maps.)
+terminal-state read. Repair is a FIFO **indexed** `Repair(i)` event keyed
+to the machine under service, whose precondition reads an observed `head` scalar
+naming the queue front — so the ChronoSim model is a faithful port of the same
+canonical machine-repair law the pure model above implements, the one law this
+page and the package's test suite share. That pure model, unchanged, also serves
+as its own SPA twin below. The estimator itself only
+speaks the [branchable-world interface](branchable.md); the
+ClockGradients–ChronoSim extension makes the `SimulationFSM` conform and
+supplies the `(sim_factory, initializer)` convenience method used below. (This
+mirrors the model in the package's `test/test_branching.jl`; see ChronoSim's
+manual for the event system and its "Cloning and branching" page for the
+capabilities the adapter maps.)
 
 ```@example worked
 module BranchRepairModel
@@ -238,11 +243,17 @@ export MRPhysical, repair_events, repair_initializer
     up::Bool
 end
 
-# `nfail` is a plain passenger: no precondition reads it, so it generates no
-# clock; a clone copies it by value.
+# `nfail` is a plain scalar passenger (no clock reads it; a clone copies it by
+# value). `head` is an observed scalar (0 = idle) tracked as place `(:head,)`:
+# the single stable handle the FIFO repair precondition reads. `order` is a
+# plain-Vector passenger carrying FIFO order; its push!/popfirst! are NOT tracked
+# and it is touched only inside `fire!` and the initializer, never by a
+# precondition/enable.
 @observedphysical MRPhysical begin
     machine::ObservedVector{Machine,Member}
     nfail::Int
+    head::Int
+    order::Vector{Int}
 end
 
 function MRPhysical(n::Int)
@@ -250,7 +261,7 @@ function MRPhysical(n::Int)
     for i in 1:n
         m[i] = Machine(false)
     end
-    return MRPhysical(m, 0)
+    return MRPhysical(m, 0, 0, Int[])
 end
 
 struct Fail <: SimEvent
@@ -268,32 +279,42 @@ end
 # The θ seam: failure rate λ = θ[1].
 enable(::Fail, physical, θ, when) = (Exponential(inv(θ[1])), when)
 
+# Machine i fails, joins the FIFO order (becoming head if the repairman is idle),
+# and the cumulative failure counter advances.
 function fire!(evt::Fail, physical, when, rng)
     physical.machine[evt.idx].up = false
+    push!(physical.order, evt.idx)
+    if physical.head == 0
+        physical.head = evt.idx
+    end
     physical.nfail += 1
     return nothing
 end
 
-struct Repair <: SimEvent end
+# Indexed by the machine i under repair; the single repairman serves the FIFO head.
+struct Repair <: SimEvent
+    i::Int
+end
 
-@guard precondition(evt::Repair, physical) =
-    any(!physical.machine[i].up for i in eachindex(physical.machine))
+# Reads ONLY `(:head,)`: never scan `order`/`machine` here, or the enlarged
+# read-set would force a spurious resample and break the KEEP semantics that let
+# the head clock retain its enabling time while a different machine fails behind it.
+@guard precondition(evt::Repair, physical) = physical.head == evt.i
 
 @conditionsfor Repair begin
+    # ChronoSim cannot @reactto changed(head) on a bare top-level scalar, so we
+    # trigger off the co-occurring machine[i].up write and read head in the body.
     @reactto changed(machine[i].up) do physical
-        generate(Repair())
+        physical.head != 0 && generate(Repair(physical.head))
     end
 end
 
 enable(::Repair, physical, θ, when) = (Exponential(inv(θ[2])), when)
 
-function fire!(::Repair, physical, when, rng)
-    for i in eachindex(physical.machine)
-        if !physical.machine[i].up
-            physical.machine[i].up = true
-            return nothing
-        end
-    end
+function fire!(evt::Repair, physical, when, rng)
+    physical.machine[evt.i].up = true
+    popfirst!(physical.order)
+    physical.head = isempty(physical.order) ? 0 : first(physical.order)
     return nothing
 end
 
@@ -303,6 +324,9 @@ function repair_initializer(physical, when, rng)
     for i in eachindex(physical.machine)
         physical.machine[i].up = true
     end
+    physical.nfail = 0
+    physical.head = 0
+    empty!(physical.order)
     return nothing
 end
 
@@ -329,8 +353,8 @@ Both components of the gradient — the failure-rate derivative IPA pinned at
 zero, and the repair-rate derivative — match the differentiated CTMC oracle,
 at the price of roughly 76 clones per replication (the `clones_per_rep`
 field: two coupled clones per Hahn–Jordan branch). At 800 replications the
-same configuration measures `z = [1.01, 0.04]` against the oracle
-`[10.727, 3.568]`, the package's exit criterion for this estimator — and the
+same configuration matches the oracle `[10.727, 3.568]` on both components,
+well within the estimator's `|z| < 4` exit criterion — and the
 [branchable-world interface](branchable.md) page shows the same oracle
 reproduced through a world with no ChronoSim in it at all.
 
@@ -372,8 +396,9 @@ exactly as the frozen-order pathwise replay must be on a terminal count — and
 SPA recovers both components of the oracle `[10.727, 3.568]`. The gate skipped a
 sizeable fraction of the candidate swaps (`skip_fraction`) without a single
 clone. At a comparable clone budget the per-epoch conditioning is tighter than
-branching's Hahn–Jordan split: the suite measures SPA's standard error 2.2–2.5×
-smaller than branching's on this functional (the ≈5× variance×time advantage).
+branching's Hahn–Jordan split: SPA's standard error is roughly a factor of two
+smaller than branching's on this functional (a severalfold variance×time
+advantage).
 
 The default `HazardWeight` strategy makes every enabled non-winner a candidate.
 The optional [`TruncatedHazard`](@ref) strategy instead prices only the observed
