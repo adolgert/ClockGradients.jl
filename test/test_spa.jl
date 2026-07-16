@@ -291,3 +291,50 @@ testset_if("spa: a wrong model twin is caught by the per-epoch enabled-set audit
     @test err isa ArgumentError
     @test occursin("model-twin audit failed", err.msg)
 end
+
+# --- SPA through the DERIVED model twin (Repairs A and B) ----------------------
+#
+# The derived twin is a ChronoSim.GsmpModel built from the SAME event families
+# the live world fires; the package extension implements the five contract
+# functions for it. The twin natively keys clocks by event INSTANCES, so it must
+# be paired with an instance-keyed world (Repair A). Repair B adds incremental
+# enabled-set maintenance so the derived twin scales.
+
+# A world that speaks INSTANCE keys, the vocabulary the derived GsmpModel twin
+# speaks. Mirrors branch_sim_factory but opts into event-instance keys.
+branch_sim_factory_instance() = ChronoSim.SimulationFSM(
+    BranchRepairModel.MachineRepairState(_BR_N), BranchRepairModel.repair_events();
+    seed=UInt64(1),
+    key_type=ChronoSim.event_key_union((BranchRepairModel.Fail, BranchRepairModel.Repair)),
+    params=_BR_θ)
+
+# The derived twin: a ChronoSim.GsmpModel over the live model's event families,
+# with the all-up point-mass initial law.
+_branch_derived_model() = ChronoSim.GsmpModel(
+    events=(BranchRepairModel.Fail, BranchRepairModel.Repair),
+    initial=() -> begin
+        s = BranchRepairModel.MachineRepairState(_BR_N)
+        for i in 1:_BR_N
+            s.machine[i].up = true
+        end
+        s
+    end,
+    params=(:lambda, :mu))
+
+testset_if("spa: a tuple-keyed world with a derived twin fails") do
+    # A0 reproduction (rewritten in A3 once the named guard lands): a derived
+    # GsmpModel keys clocks by event instances, but branch_sim_factory builds a
+    # TUPLE-keyed world, so today the mismatch surfaces as the epoch-1 audit
+    # failure rather than a helpful construction-time error.
+    dm = _branch_derived_model()
+    fn = ClockGradients.TerminalObservable(s -> s.nfail)
+    err = try
+        spa_gradient(branch_sim_factory, BranchRepairModel.repair_initializer,
+                     dm, _BR_θ, fn; nreps=20, horizon=_BR_T, seed=2027)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("audit", err.msg)
+end
