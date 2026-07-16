@@ -95,6 +95,69 @@ end # module DictChurnFixture
 
 using .DictChurnFixture
 
+# --- a model that isolates the watcher index: a gate event whose GENERATOR
+# reacts only to machine[1].up, but whose PRECONDITION reads machine[1].up AND
+# machine[2].up. Firing an event that writes only machine[2].up is not seen by
+# any WGate-proposing generator, so only the carried watcher index can trigger
+# the re-check that disables WGate. -----------------------------------------
+module WatchFixture
+
+using ChronoSim
+using ChronoSim.ObservedState
+using Distributions
+
+import ChronoSim: precondition, generators, enable, fire!
+
+export WMachine, WState, WFail, WGate, w_all_up
+
+@keyedby WMachine Int64 begin
+    up::Bool
+end
+@observedphysical WState begin
+    machine::ObservedVector{WMachine,Member}
+end
+function w_all_up(n::Int)
+    m = ObservedArray{WMachine,Member}(undef, n)
+    for i in 1:n
+        m[i] = WMachine(true)
+    end
+    return WState(m)
+end
+
+struct WFail <: SimEvent
+    idx::Int
+end
+precondition(evt::WFail, physical) = physical.machine[evt.idx].up
+@conditionsfor WFail begin
+    @reactto changed(machine[i].up) do physical
+        generate(WFail(i))
+    end
+end
+enable(::WFail, physical, θ, when) = (Exponential(inv(θ[1])), when)
+fire!(evt::WFail, physical, when, rng) = (physical.machine[evt.idx].up = false; nothing)
+
+# WGate: generator reacts ONLY to machine[1].up; precondition reads 1 AND 2.
+struct WGate <: SimEvent end
+precondition(::WGate, physical) =
+    physical.machine[1].up && physical.machine[2].up
+@conditionsfor WGate begin
+    @reactto changed(machine[i].up) do physical
+        i == 1 && generate(WGate())
+    end
+end
+enable(::WGate, physical, θ, when) = (Exponential(inv(θ[2])), when)
+fire!(::WGate, physical, when, rng) = nothing
+
+end # module WatchFixture
+
+using .WatchFixture
+
+watch_model(n::Int) = GsmpModel(
+    events=(WatchFixture.WFail, WatchFixture.WGate),
+    initial=() -> WatchFixture.w_all_up(n),
+    params=(:a, :b),
+)
+
 dchurn_model(n::Int) = GsmpModel(
     events=(DictChurnFixture.DFill, DictChurnFixture.DEmpty),
     initial=() -> DictChurnFixture.dchurn_all_empty(n),
@@ -157,6 +220,24 @@ testset_if("gsmp: firing the queue head's repair disables that repair clock and 
     @test en2 == ClockGradients.enabled(dm, snew)   # and it matches the full recompute
 end
 
+testset_if("gsmp: the watcher index alone disables an event whose generator does not react to the changed place") do
+    # WGate's generator reacts only to machine[1].up, but its precondition also
+    # reads machine[2].up. Firing WFail(2) writes only machine[2].up, which no
+    # WGate-proposing generator watches — so if the incremental path relied on
+    # generators alone it would MISS the disabling. The carried watcher index
+    # (machine[2].up -> {WGate}) is what forces the re-check.
+    m = watch_model(3)
+    WGate = WatchFixture.WGate
+    s0 = ClockGradients.initial_state(m)
+    en0 = ClockGradients.enabled(m, s0)
+    @test WGate() in en0
+
+    (s1, ch) = fire_changes(m, s0, WatchFixture.WFail(2))
+    en1 = enabled_update(m, s1, WatchFixture.WFail(2), en0, ch)
+    @test !(WGate() in en1)                          # removed via the watcher index
+    @test en1 == ClockGradients.enabled(m, s1)       # and matches the full recompute
+end
+
 testset_if("gsmp: enabled_update does not mutate the previous enabled set") do
     # The copy-on-write tripwire: two calls from the same (state, prev, changed)
     # must agree, and prev must be untouched.
@@ -169,5 +250,12 @@ testset_if("gsmp: enabled_update does not mutate the previous enabled set") do
     upd2 = enabled_update(dm, snew, BranchRepairModel.Fail(1), en0, changed)
     @test upd1 == upd2
     @test en0 == prev_copy
+    # The carried read-dependency index must be untouched too: the copy-on-write
+    # rule protects prev's shared deps/watchers across the two calls. (These are
+    # the derived twin's concrete DerivedEnabledSet fields; the core checker
+    # stays contract-generic.)
+    @test en0.keys == prev_copy.keys
+    @test en0.deps == prev_copy.deps
+    @test en0.watchers == prev_copy.watchers
     @test upd1 == ClockGradients.enabled(dm, snew)
 end
