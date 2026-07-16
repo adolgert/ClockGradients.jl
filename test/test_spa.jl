@@ -446,6 +446,10 @@ ClockGradients.enabled(t::FallbackTwin, s) = ClockGradients.enabled(t.inner, s)
 ClockGradients.clock_distribution(t::FallbackTwin, θ::AbstractVector, key, state) =
     ClockGradients.clock_distribution(t.inner, θ, key, state)
 ClockGradients.fire(t::FallbackTwin, s, key) = ClockGradients.fire(t.inner, s, key)
+# Delegate the whole-state equality seam too, or the commuting gate reverts to
+# identity comparison and the bit-identity comparison below diverges.
+ClockGradients.states_equal(t::FallbackTwin, a, b) =
+    ClockGradients.states_equal(t.inner, a, b)
 
 testset_if("spa: the derived-twin estimate is unchanged by incremental maintenance at a fixed seed") do
     dm = _branch_derived_model()

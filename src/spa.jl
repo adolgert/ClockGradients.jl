@@ -67,7 +67,7 @@ function commuting_pair(model, s_pre, en_pre, ekey, cand)
     (s2, ch2) = fire_changes(model, s_pre, cand)
     en2 = enabled_update(model, s2, cand, en_pre, ch2)
     ekey in en2 || return false
-    fire(model, s1, cand) == fire(model, s2, ekey)
+    states_equal(model, fire(model, s1, cand), fire(model, s2, ekey))
 end
 
 # First passage's cheap universal early-out: once the shared prefix has hit

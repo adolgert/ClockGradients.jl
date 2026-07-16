@@ -270,6 +270,11 @@ trajectories of at most `nsteps` firings each (choosing the next key uniformly
 from the model's own enabled set with a seeded RNG), and after every fire checks
 that the incremental step agrees with a fresh full recompute.
 
+`θ` is accepted for signature symmetry with [`check_branchable`](@ref) and for a
+future distribution-probe extension; the enabled-set contract this checker
+exercises is θ-free (membership is a pure function of the state), so `θ` is
+currently unused.
+
 The returned `NamedTuple` has one `Bool` per obligation, an aggregate, and
 diagnostics:
 
@@ -307,7 +312,7 @@ function check_enabled_update(model, θ; nsteps::Integer=200, npaths::Integer=10
             # fire_changes must agree with fire on the new state.
             (snew, changed) = fire_changes(model, s, k)
             sfire = fire(model, s, k)
-            if !(snew == sfire)
+            if !states_equal(model, snew, sfire)
                 fire_agrees = false
                 push!(diags,
                     "fire_agrees: path $path step $step key $k: " *

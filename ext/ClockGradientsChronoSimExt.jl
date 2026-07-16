@@ -136,17 +136,19 @@ function _check_derived_key_vocabulary(sim::SimulationFSM, model::GsmpModel)
         "types so the world and the twin speak the same vocabulary."))
 end
 
-# The SPA commuting gate compares two folded states by value:
-# `fire(model, s1, cand) == fire(model, s2, ekey)`. `@keyedby` generates a
-# fieldwise `==` for element structs, but `@observedphysical` does NOT generate
-# one for the top-level state, so a derived-twin state would fall back to
-# identity `===` and the gate would never skip a commuting pair (unbiased but
-# clone-wasteful; clone_requirements §2.7 flags this as a silent failure). Bridge
-# it to the notify-free structural equality `verify_clone` already uses, so a
-# derived twin's gate skips exactly the pairs a hand-written twin's does.
-Base.:(==)(a::ChronoSim.ObservedState.ObservedPhysical,
-           b::ChronoSim.ObservedState.ObservedPhysical) =
-    ChronoSim.ObservedState._state_equal(a, b)
+# The SPA commuting gate and the incremental-contract conformance checker compare
+# two folded states by VALUE (does firing a pair in both orders re-coalesce?).
+# `@keyedby` generates a fieldwise `==` for element structs, but `@observedphysical`
+# does NOT generate one for the top-level state, so a derived-twin state compared
+# with `==` would fall back to identity `===` and the gate would never skip a
+# commuting pair (unbiased but clone-wasteful; clone_requirements §2.7 flags this
+# as a silent failure). Rather than pirate `Base.:(==)` on all ObservedPhysical
+# (which would violate the hash/`==` contract and collide with the `==` that
+# `@observedphysical` should eventually generate), the pure-model contract exposes
+# `states_equal`, and this one method routes it to the notify-free structural
+# equality `verify_clone` already uses — confining the internal-API dependency to
+# a single explicit method.
+ClockGradients.states_equal(::GsmpModel, a, b) = ChronoSim.ObservedState._state_equal(a, b)
 
 # The optional tenth verb. The context-level getindex (CompetingClocks 0.4.1)
 # reports an enabled clock's scheduled firing time, so the schedule is the
@@ -483,6 +485,16 @@ function ClockGradients.enabled_update(model::GsmpModel, new_state, fired_key,
             end
         end
         # !was && !holds: nothing to do.
+    end
+
+    # Prune watcher entries emptied by this call, so an unbounded place domain
+    # cannot leak empty sets across a replication. Only touched (copied) sets can
+    # have shrunk, and untouched sets are non-empty by invariant, so scanning
+    # `touched` is sufficient. Pruning here rather than inline keeps the rewire
+    # path correct: a place read both before and after keeps its entry (the
+    # re-add repopulates it) instead of being deleted mid-loop.
+    for p in touched
+        (haskey(watchers, p) && isempty(watchers[p])) && delete!(watchers, p)
     end
 
     return DerivedEnabledSet{K}(keys, deps, watchers)

@@ -121,6 +121,24 @@ enabled — never a rate — depends on θ.
 function fire end
 
 """
+    states_equal(model, a, b) -> Bool
+
+Whole-state value equality for the model's state type, part of the pure-model
+contract. The estimators compare whole states in two places — the SPA commuting
+gate (does firing a pair in both orders re-coalesce?) and the incremental-contract
+conformance checker (does `fire_changes` agree with `fire`?) — and both must use
+VALUE equality, not object identity.
+
+The default is `a == b`, which is correct for any state type that defines a
+fieldwise `==` (a hand-written twin, a `@keyedby` element). A framework whose
+top-level state type does NOT define a value `==` (so `==` would fall back to
+identity `===` and silently disable the gate) overrides this method to supply the
+structural comparison, keeping the dependency on that framework's internals
+confined to one explicit method rather than pirating `Base.:(==)`.
+"""
+states_equal(model, a, b) = a == b
+
+"""
     fire_changes(model, state, key) -> (new_state, changed)
 
 Like [`fire`](@ref), but ALSO returns `changed`: an opaque description of what

@@ -50,7 +50,7 @@ export loghazard, hazard, conditional_remaining
 # The GSMP model contract (five extendable generic functions + the replay
 # channel). Downstream models add methods to these.
 export initial_state, clockkeytype, enabled, clock_distribution, fire
-export fire_changes, enabled_update
+export fire_changes, enabled_update, states_equal
 export sync_enabling_times!
 
 # Records: the flattened trajectory the estimators replay, and its builders.
