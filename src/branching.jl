@@ -62,16 +62,13 @@ end
 
 # Drive a world to the horizon by the same peek/commit loop the base path uses.
 # Declining the first firing beyond the horizon is the fixed-horizon stop.
-function run_to_horizon!(w, horizon::Float64; trace=nothing)
-    Phase0.@p0time :br_run_to_horizon begin
-        while true
-            pk = branch_peek(w)
-            pk === nothing && return w
-            (tstar, key) = pk
-            tstar <= horizon || return w
-            branch_commit!(w, key, tstar)
-            trace === nothing || push!(trace, Phase0.SNAPSHOT[](w))
-        end
+function run_to_horizon!(w, horizon::Float64)
+    while true
+        pk = branch_peek(w)
+        pk === nothing && return w
+        (tstar, key) = pk
+        tstar <= horizon || return w
+        branch_commit!(w, key, tstar)
     end
 end
 
@@ -80,17 +77,12 @@ end
 # under common random numbers), impose `key` at `tstar`, run to the horizon, and
 # read the terminal functional. The base prefix is embodied identically in both
 # clones' state, so for a difference `f⁺ − f⁻` the shared prefix cancels.
-function branch_value(w, key, tstar::Float64, seed::UInt64, horizon::Float64, f_state;
-                      trace=nothing)
-    Phase0.@p0time :br_pair_value begin
-        cl = branch_clone(w)
-        branch_rekey!(cl, seed)
-        branch_force!(cl, key, tstar)
-        # Snapshot right after the forced fire, before the continuation loop.
-        trace === nothing || push!(trace, Phase0.SNAPSHOT[](cl))
-        run_to_horizon!(cl, horizon; trace=trace)
-        return Float64(f_state(branch_state(cl)))
-    end
+function branch_value(w, key, tstar::Float64, seed::UInt64, horizon::Float64, f_state)
+    cl = branch_clone(w)
+    branch_rekey!(cl, seed)
+    branch_force!(cl, key, tstar)
+    run_to_horizon!(cl, horizon)
+    return Float64(f_state(branch_state(cl)))
 end
 
 # --- one branching replication ----------------------------------------------
@@ -106,7 +98,6 @@ end
 function _branch_replication(w, θ0::Vector{Float64}, f_state, D::Int,
                              horizon::Float64, est_rng::AbstractRNG,
                              max_branches::Union{Nothing,Int})
-    Phase0.@p0time :br_replication begin
     sojacc = zeros(D)
     selacc = zeros(D)
     nclones = 0
@@ -130,7 +121,7 @@ function _branch_replication(w, θ0::Vector{Float64}, f_state, D::Int,
         dt = tstar - tprev
 
         # Sojourn (time) part: ∂θ [log Λ − Λ·dt] for the interval [tprev, tstar].
-        sojacc .+= Phase0.@p0time :br_score ForwardDiff.gradient(θ0) do θx
+        sojacc .+= ForwardDiff.gradient(θ0) do θx
             Λ = total_rate(w, ekeys, eages, θx)
             log(Λ) - Λ * dt
         end
@@ -138,20 +129,15 @@ function _branch_replication(w, θ0::Vector{Float64}, f_state, D::Int,
         # Selection (event-order) part: only a genuine race carries it.
         if length(ekeys) > 1
             if isnothing(max_branches) || nbranch < max_branches
-                J = Phase0.@p0time :br_hj_jacobian ForwardDiff.jacobian(θx -> selection_probs(w, ekeys, eages, θx), θ0)
+                J = ForwardDiff.jacobian(θx -> selection_probs(w, ekeys, eages, θx), θ0)
                 for j in 1:D
                     c, pplus, pminus = hahn_jordan(view(J, :, j))
                     if c > 0
                         bseed = rand(est_rng, UInt64)   # shared by A and B (coupling)
                         jA = pick(pplus, rand(est_rng))
                         jB = pick(pminus, rand(est_rng))
-                        # Coalescence probe: record the f⁺/f⁻ continuation traces.
-                        rec = Phase0.COALESCE[] && length(Phase0.COALESCE_LOG) < Phase0.COALESCE_CAP[]
-                        ta = rec ? Any[] : nothing
-                        tb = rec ? Any[] : nothing
-                        fA = branch_value(w, ekeys[jA], tstar, bseed, horizon, f_state; trace=ta)
-                        fB = branch_value(w, ekeys[jB], tstar, bseed, horizon, f_state; trace=tb)
-                        rec && push!(Phase0.COALESCE_LOG, (kind=:branching, a=ta, b=tb))
+                        fA = branch_value(w, ekeys[jA], tstar, bseed, horizon, f_state)
+                        fB = branch_value(w, ekeys[jB], tstar, bseed, horizon, f_state)
                         selacc[j] += c * (fA - fB)
                         nclones += 2
                     end
@@ -162,7 +148,7 @@ function _branch_replication(w, θ0::Vector{Float64}, f_state, D::Int,
             end
         end
 
-        Phase0.@p0time :br_commit branch_commit!(w, key_nat, tstar)
+        branch_commit!(w, key_nat, tstar)
         tprev = tstar
     end
 
@@ -181,7 +167,6 @@ function _branch_replication(w, θ0::Vector{Float64}, f_state, D::Int,
 
     return (f=Float64(f_state(branch_state(w))), sojourn=sojacc, selection=selacc,
             nclones=nclones, truncated=truncated)
-    end
 end
 
 # --- the public estimator ----------------------------------------------------

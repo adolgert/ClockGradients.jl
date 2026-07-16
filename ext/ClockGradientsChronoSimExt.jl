@@ -227,7 +227,6 @@ ClockGradients.clockkeytype(model::GsmpModel) = ChronoSim.model_keytype(model)
 # model_key_order makes the order deterministic by construction (and identical
 # to sorting the engine's own enabled-key set the same way).
 function ClockGradients.enabled(model::GsmpModel, state)
-    ClockGradients.Phase0.@p0time :ext_enabled begin
     gens = _gsmp_generators(model)
     K = ChronoSim.model_keytype(model)
     out = Vector{K}()
@@ -244,7 +243,6 @@ function ClockGradients.enabled(model::GsmpModel, state)
     end
     sort!(out; order=ChronoSim.model_key_order(model))
     return out
-    end
 end
 
 # The θ seam, derived: the clock key IS the event instance, so the distribution
@@ -297,7 +295,6 @@ end
 # fire! that READS its `when` argument into the state is outside the derived
 # contract's state-fold semantics (its states would depend on firing times).
 function ClockGradients.fire(model::GsmpModel, state, key)
-    ClockGradients.Phase0.@p0time :ext_fire begin
     gens = _gsmp_generators(model)
     work = ChronoSim.ObservedState.clone(state)
     crng = ChronoSim.CountingRNG(Xoshiro(0))
@@ -333,7 +330,6 @@ function ClockGradients.fire(model::GsmpModel, state, key)
             "the record-replay estimators."))
     end
     return work
-    end
 end
 
 # --- record conversion + the model-value driver --------------------------------
