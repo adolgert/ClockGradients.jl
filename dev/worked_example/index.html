@@ -26,23 +26,23 @@ clockkeytype(::MachineRepair) = Tuple{Symbol,Int}
 function enabled(m::MachineRepair, s::MRState)
     ks = Tuple{Symbol,Int}[]
     for i in 1:m.nmachines
-        s.up[i] &amp;&amp; push!(ks, (:fail, i))
+        s.up[i] &amp;&amp; push!(ks, (:Fail, i))
     end
-    isempty(s.queue) || push!(ks, (:repair, s.queue[1]))
+    isempty(s.queue) || push!(ks, (:Repair, s.queue[1]))
     ks
 end
 
 # θ = [λ, μ]. Distributions.Exponential takes the MEAN, so rate λ is
 # Exponential(1/λ); `one(eltype(θ))` carries a dual θ&#39;s element type through.
 clock_distribution(::MachineRepair, θ, key::Tuple{Symbol,Int}) =
-    key[1] === :fail ? Exponential(one(eltype(θ)) / θ[1]) :
+    key[1] === :Fail ? Exponential(one(eltype(θ)) / θ[1]) :
                        Exponential(one(eltype(θ)) / θ[2])
 
 # Pure: returns a fresh state, never mutates its argument.
 function fire(::MachineRepair, s::MRState, key::Tuple{Symbol,Int})
     up, queue, nfail = copy(s.up), copy(s.queue), s.nfail
     kind, i = key
-    if kind === :fail
+    if kind === :Fail
         up[i] = false
         push!(queue, i)
         nfail += 1
@@ -89,24 +89,24 @@ oracle_ddown = ForwardDiff.derivative(
 (dfailures_dλ = oracle_dfail, ddowntime_dλ = oracle_ddown)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(dfailures_dλ = 10.727068825012754, ddowntime_dλ = 27.22163293552316)</code></pre><h2 id="Simulate-and-record"><a class="docs-heading-anchor" href="#Simulate-and-record">Simulate and record</a><a id="Simulate-and-record-1"></a><a class="docs-heading-anchor-permalink" href="#Simulate-and-record" title="Permalink"></a></h2><p><a href="../reference/#ClockGradients.run_recorded"><code>run_recorded</code></a> drives the model through a real <code>CompetingClocks.SamplingContext</code> with a <code>TrajectoryRecorder</code> attached, and <code>GradientRecord</code> ingests the result (passing the enabling-time audit described in <a href="../records/">Records and ingestion</a>). Every ingested firing satisfies the retained-draw identity:</p><pre><code class="language-julia hljs">rec = run_recorded(Xoshiro(1), model, θ0, FirstReactionMethod(); horizon=horizon)
 grec = GradientRecord(model, rec; coupling=:carry)
 replayed = replay_times(model, θ0, grec)   # replay at θ0 must reproduce the record
-(nfirings = length(grec), max_replay_gap = maximum(abs.(replayed .- grec.time)))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(nfirings = 31, max_replay_gap = 0.0)</code></pre><h2 id="The-score-estimator"><a class="docs-heading-anchor" href="#The-score-estimator">The score estimator</a><a id="The-score-estimator-1"></a><a class="docs-heading-anchor-permalink" href="#The-score-estimator" title="Permalink"></a></h2><p>The functional is declared once as a <a href="../reference/#ClockGradients.PathFunctional"><code>PathFunctional</code></a> — here the terminal failure count — and <a href="../reference/#ClockGradients.simulate_and_estimate"><code>simulate_and_estimate</code></a> simulates, ingests, and averages <code>f(X) ⋅ ∂θ log L</code>. Component 1 is the <code>λ</code> derivative:</p><pre><code class="language-julia hljs">failcount = TerminalObservable(s -&gt; Float64(s.nfail))
+(nfirings = length(grec), max_replay_gap = maximum(abs.(replayed .- grec.time)))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(nfirings = 24, max_replay_gap = 0.0)</code></pre><h2 id="The-score-estimator"><a class="docs-heading-anchor" href="#The-score-estimator">The score estimator</a><a id="The-score-estimator-1"></a><a class="docs-heading-anchor-permalink" href="#The-score-estimator" title="Permalink"></a></h2><p>The functional is declared once as a <a href="../reference/#ClockGradients.PathFunctional"><code>PathFunctional</code></a> — here the terminal failure count — and <a href="../reference/#ClockGradients.simulate_and_estimate"><code>simulate_and_estimate</code></a> simulates, ingests, and averages <code>f(X) ⋅ ∂θ log L</code>. Component 1 is the <code>λ</code> derivative:</p><pre><code class="language-julia hljs">failcount = TerminalObservable(s -&gt; Float64(s.nfail))
 sc = simulate_and_estimate(Xoshiro(90210), model, θ0, FirstReactionMethod(),
                            failcount; nreps=6_000, horizon=horizon)
 (estimate = sc.estimate[1], stderr = sc.stderr[1],
  z_vs_oracle = (sc.estimate[1] - oracle_dfail) / sc.stderr[1],
- drift_alarm_z = sc.scoremean[1] / sc.scorestderr[1])</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(estimate = 10.57358053570141, stderr = 0.26717907377826805, z_vs_oracle = -0.5744772116349353, drift_alarm_z = -1.2379810317656765)</code></pre><p>The estimate lands within the four-standard-error band of the exact CTMC derivative, and the drift alarm — the mean of the raw score, which is exactly zero in expectation — confirms the replay&#39;s bookkeeping agrees with the sampler that produced the records.</p><h2 id="The-pathwise-estimator,-and-the-paired-verdict"><a class="docs-heading-anchor" href="#The-pathwise-estimator,-and-the-paired-verdict">The pathwise estimator, and the paired verdict</a><a id="The-pathwise-estimator,-and-the-paired-verdict-1"></a><a class="docs-heading-anchor-permalink" href="#The-pathwise-estimator,-and-the-paired-verdict" title="Permalink"></a></h2><p>The failure count reads only the frozen discrete state, so its pathwise derivative is exactly zero on every path — the IPA failure mode. Running both estimators on the <em>same</em> records with <a href="../reference/#ClockGradients.paired_simulate_and_estimate"><code>paired_simulate_and_estimate</code></a> turns that into a flagged verdict rather than a silent wrong answer:</p><pre><code class="language-julia hljs">pv_count = paired_simulate_and_estimate(Xoshiro(90210), model, θ0,
+ drift_alarm_z = sc.scoremean[1] / sc.scorestderr[1])</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(estimate = 10.426327580475578, stderr = 0.2700835840999558, z_vs_oracle = -1.1135117505915306, drift_alarm_z = 1.2246808061392809)</code></pre><p>The estimate lands within the four-standard-error band of the exact CTMC derivative, and the drift alarm — the mean of the raw score, which is exactly zero in expectation — confirms the replay&#39;s bookkeeping agrees with the sampler that produced the records.</p><h2 id="The-pathwise-estimator,-and-the-paired-verdict"><a class="docs-heading-anchor" href="#The-pathwise-estimator,-and-the-paired-verdict">The pathwise estimator, and the paired verdict</a><a id="The-pathwise-estimator,-and-the-paired-verdict-1"></a><a class="docs-heading-anchor-permalink" href="#The-pathwise-estimator,-and-the-paired-verdict" title="Permalink"></a></h2><p>The failure count reads only the frozen discrete state, so its pathwise derivative is exactly zero on every path — the IPA failure mode. Running both estimators on the <em>same</em> records with <a href="../reference/#ClockGradients.paired_simulate_and_estimate"><code>paired_simulate_and_estimate</code></a> turns that into a flagged verdict rather than a silent wrong answer:</p><pre><code class="language-julia hljs">pv_count = paired_simulate_and_estimate(Xoshiro(90210), model, θ0,
     FirstReactionMethod(), failcount; nreps=6_000, horizon=horizon,
     coupling=:carry)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">PairedGradient(nreps=6000)
-  [1] score=10.57±0.27  ipa=0.0±0.0  z=39.6  BIAS
-  [2] score=3.579±0.085  ipa=0.0±0.0  z=42.3  BIAS</code></pre><p>IPA is pinned at zero with zero variance; the score recovers the oracle; the difference is significant, so <code>bias_detected</code> flags the <code>λ</code> component (and the <code>μ</code> component). Now the same pairing on integrated downtime — a functional that is <em>continuous</em> in the firing times, where IPA is valid under the carry coupling these records store:</p><pre><code class="language-julia hljs">downtime = IntegratedOccupancy(ndown)
+  [1] score=10.43±0.27  ipa=0.0±0.0  z=38.6  BIAS
+  [2] score=3.631±0.083  ipa=0.0±0.0  z=43.5  BIAS</code></pre><p>IPA is pinned at zero with zero variance; the score recovers the oracle; the difference is significant, so <code>bias_detected</code> flags the <code>λ</code> component (and the <code>μ</code> component). Now the same pairing on integrated downtime — a functional that is <em>continuous</em> in the firing times, where IPA is valid under the carry coupling these records store:</p><pre><code class="language-julia hljs">downtime = IntegratedOccupancy(ndown)
 pv_down = paired_simulate_and_estimate(Xoshiro(2718), model, θ0,
     FirstReactionMethod(), downtime; nreps=6_000, horizon=horizon,
     coupling=:carry)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">PairedGradient(nreps=6000)
-  [1] score=27.78±0.57  ipa=26.97±0.14  z=1.38  ok
-  [2] score=-7.381±0.17  ipa=-7.138±0.061  z=-1.37  ok</code></pre><pre><code class="language-julia hljs">(oracle = oracle_ddown,
+  [1] score=27.26±0.58  ipa=27.02±0.14  z=0.407  ok
+  [2] score=-7.433±0.17  ipa=-7.085±0.061  z=-1.97  ok</code></pre><pre><code class="language-julia hljs">(oracle = oracle_ddown,
  ipa_z_vs_oracle = (pv_down.ipa[1] - oracle_ddown) / pv_down.ipa_stderr[1],
  stderr_ratio_score_over_ipa = pv_down.score_stderr[1] / pv_down.ipa_stderr[1],
- bias_detected = pv_down.bias_detected[1])</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(oracle = 27.22163293552316, ipa_z_vs_oracle = -1.8916886276873168, stderr_ratio_score_over_ipa = 4.232235783881759, bias_detected = false)</code></pre><p>Both estimators agree with the exact oracle, the pairing does not flag, and the IPA column is severalfold tighter than the score at the same sample size — agreement is the certificate that the cheap number is the one to report. (At 20,000 replications the package&#39;s test suite measures this as IPA <code>27.13 ± 0.075</code> versus score <code>27.30 ± 0.31</code> against the oracle <code>27.2216</code>.)</p><h2 id="The-branching-estimator,-on-a-ChronoSim-model"><a class="docs-heading-anchor" href="#The-branching-estimator,-on-a-ChronoSim-model">The branching estimator, on a ChronoSim model</a><a id="The-branching-estimator,-on-a-ChronoSim-model-1"></a><a class="docs-heading-anchor-permalink" href="#The-branching-estimator,-on-a-ChronoSim-model" title="Permalink"></a></h2><p>For the failure <em>count</em> — where IPA is identically zero and only the score&#39;s higher-variance estimate survives the pairing — the weak-derivative branching estimator gives an unbiased alternative. It needs a live simulation, not a record: the same machine-repair model is written as a ChronoSim model, with the failure counter carried in the physical state so the functional is a terminal-state read. The estimator itself only speaks the <a href="../branchable/">branchable-world interface</a>; the ClockGradients–ChronoSim extension makes the <code>SimulationFSM</code> conform and supplies the <code>(sim_factory, initializer)</code> convenience method used below. (This mirrors the model in the package&#39;s <code>test/test_branching.jl</code>; see ChronoSim&#39;s manual for the event system and its &quot;Cloning and branching&quot; page for the capabilities the adapter maps.)</p><pre><code class="language-julia hljs">module BranchRepairModel
+ bias_detected = pv_down.bias_detected[1])</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(oracle = 27.22163293552316, ipa_z_vs_oracle = -1.4891732799607953, stderr_ratio_score_over_ipa = 4.212581879527375, bias_detected = false)</code></pre><p>Both estimators agree with the exact oracle, the pairing does not flag, and the IPA column is severalfold tighter than the score at the same sample size — agreement is the certificate that the cheap number is the one to report. (At 20,000 replications the package&#39;s test suite measures this as IPA <code>27.13 ± 0.075</code> versus score <code>27.30 ± 0.31</code> against the oracle <code>27.2216</code>.)</p><h2 id="The-branching-estimator,-on-a-ChronoSim-model"><a class="docs-heading-anchor" href="#The-branching-estimator,-on-a-ChronoSim-model">The branching estimator, on a ChronoSim model</a><a id="The-branching-estimator,-on-a-ChronoSim-model-1"></a><a class="docs-heading-anchor-permalink" href="#The-branching-estimator,-on-a-ChronoSim-model" title="Permalink"></a></h2><p>For the failure <em>count</em> — where IPA is identically zero and only the score&#39;s higher-variance estimate survives the pairing — the weak-derivative branching estimator gives an unbiased alternative. It needs a live simulation, not a record: the same machine-repair model is written as a ChronoSim model, with the failure counter carried in the physical state so the functional is a terminal-state read. Repair is a FIFO <strong>indexed</strong> <code>Repair(i)</code> event keyed to the machine under service, whose precondition reads an observed <code>head</code> scalar naming the queue front — so the ChronoSim model is a faithful port of the same canonical machine-repair law the pure model above implements, the one law this page and the package&#39;s test suite share. That pure model, unchanged, also serves as its own SPA twin below. The estimator itself only speaks the <a href="../branchable/">branchable-world interface</a>; the ClockGradients–ChronoSim extension makes the <code>SimulationFSM</code> conform and supplies the <code>(sim_factory, initializer)</code> convenience method used below. (This mirrors the model in the package&#39;s <code>test/test_branching.jl</code>; see ChronoSim&#39;s manual for the event system and its &quot;Cloning and branching&quot; page for the capabilities the adapter maps.)</p><pre><code class="language-julia hljs">module BranchRepairModel
 
 using ChronoSim
 using ChronoSim.ObservedState
@@ -120,11 +120,17 @@ export MRPhysical, repair_events, repair_initializer
     up::Bool
 end
 
-# `nfail` is a plain passenger: no precondition reads it, so it generates no
-# clock; a clone copies it by value.
+# `nfail` is a plain scalar passenger (no clock reads it; a clone copies it by
+# value). `head` is an observed scalar (0 = idle) tracked as place `(:head,)`:
+# the single stable handle the FIFO repair precondition reads. `order` is a
+# plain-Vector passenger carrying FIFO order; its push!/popfirst! are NOT tracked
+# and it is touched only inside `fire!` and the initializer, never by a
+# precondition/enable.
 @observedphysical MRPhysical begin
     machine::ObservedVector{Machine,Member}
     nfail::Int
+    head::Int
+    order::Vector{Int}
 end
 
 function MRPhysical(n::Int)
@@ -132,7 +138,7 @@ function MRPhysical(n::Int)
     for i in 1:n
         m[i] = Machine(false)
     end
-    return MRPhysical(m, 0)
+    return MRPhysical(m, 0, 0, Int[])
 end
 
 struct Fail &lt;: SimEvent
@@ -150,32 +156,42 @@ end
 # The θ seam: failure rate λ = θ[1].
 enable(::Fail, physical, θ, when) = (Exponential(inv(θ[1])), when)
 
+# Machine i fails, joins the FIFO order (becoming head if the repairman is idle),
+# and the cumulative failure counter advances.
 function fire!(evt::Fail, physical, when, rng)
     physical.machine[evt.idx].up = false
+    push!(physical.order, evt.idx)
+    if physical.head == 0
+        physical.head = evt.idx
+    end
     physical.nfail += 1
     return nothing
 end
 
-struct Repair &lt;: SimEvent end
+# Indexed by the machine i under repair; the single repairman serves the FIFO head.
+struct Repair &lt;: SimEvent
+    i::Int
+end
 
-@guard precondition(evt::Repair, physical) =
-    any(!physical.machine[i].up for i in eachindex(physical.machine))
+# Reads ONLY `(:head,)`: never scan `order`/`machine` here, or the enlarged
+# read-set would force a spurious resample and break the KEEP semantics that let
+# the head clock retain its enabling time while a different machine fails behind it.
+@guard precondition(evt::Repair, physical) = physical.head == evt.i
 
 @conditionsfor Repair begin
+    # ChronoSim cannot @reactto changed(head) on a bare top-level scalar, so we
+    # trigger off the co-occurring machine[i].up write and read head in the body.
     @reactto changed(machine[i].up) do physical
-        generate(Repair())
+        physical.head != 0 &amp;&amp; generate(Repair(physical.head))
     end
 end
 
 enable(::Repair, physical, θ, when) = (Exponential(inv(θ[2])), when)
 
-function fire!(::Repair, physical, when, rng)
-    for i in eachindex(physical.machine)
-        if !physical.machine[i].up
-            physical.machine[i].up = true
-            return nothing
-        end
-    end
+function fire!(evt::Repair, physical, when, rng)
+    physical.machine[evt.i].up = true
+    popfirst!(physical.order)
+    physical.head = isempty(physical.order) ? 0 : first(physical.order)
     return nothing
 end
 
@@ -185,6 +201,9 @@ function repair_initializer(physical, when, rng)
     for i in eachindex(physical.machine)
         physical.machine[i].up = true
     end
+    physical.nfail = 0
+    physical.head = 0
+    empty!(physical.order)
     return nothing
 end
 
@@ -204,7 +223,7 @@ oracle_dfail_μ = ForwardDiff.derivative(
 (estimate = res.estimate, stderr = res.stderr,
  z_vs_oracle = [(res.estimate[1] - oracle_dfail) / res.stderr[1],
                 (res.estimate[2] - oracle_dfail_μ) / res.stderr[2]],
- clones_per_rep = res.clones_per_rep)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(estimate = [12.381913587556456, 3.6880302356418384], stderr = [1.4702822632813173, 0.3142119100612509], z_vs_oracle = [1.1255286171040961, 0.3819451040174106], clones_per_rep = 76.17333333333333)</code></pre><p>Both components of the gradient — the failure-rate derivative IPA pinned at zero, and the repair-rate derivative — match the differentiated CTMC oracle, at the price of roughly 76 clones per replication (the <code>clones_per_rep</code> field: two coupled clones per Hahn–Jordan branch). At 800 replications the same configuration measures <code>z = [1.01, 0.04]</code> against the oracle <code>[10.727, 3.568]</code>, the package&#39;s exit criterion for this estimator — and the <a href="../branchable/">branchable-world interface</a> page shows the same oracle reproduced through a world with no ChronoSim in it at all.</p><h2 id="The-SPA-estimator,-on-the-packaged-world"><a class="docs-heading-anchor" href="#The-SPA-estimator,-on-the-packaged-world">The SPA estimator, on the packaged world</a><a id="The-SPA-estimator,-on-the-packaged-world-1"></a><a class="docs-heading-anchor-permalink" href="#The-SPA-estimator,-on-the-packaged-world" title="Permalink"></a></h2><p>Smoothed perturbation analysis (<a href="../reference/#ClockGradients.spa_gradient"><code>spa_gradient</code></a>) targets the same order-sensitive regime as branching but <em>conditions</em> instead of <em>splitting</em>: its estimate is the pathwise (IPA) term plus a hazard-weighted boundary term at each event-order swap. It needs the same live branchable world — the ChronoSim extension supplies a matching <code>spa_gradient(sim_factory, initializer, model, θ, fn)</code> convenience method, the SPA analogue of the branching call above — but here we run it through the packaged <a href="../reference/#ClockGradients.ClockWorld"><code>ClockWorld</code></a>, which turns the pure five-function model into a branchable world with no framework at all, so the model is its own twin.</p><p>SPA&#39;s criticality gate decides which order swaps can move the functional by firing candidate pairs in both orders and comparing the resulting states, so it needs the model&#39;s state to compare by value. <code>MRState</code> carries arrays, whose default <code>==</code> is identity; defining it fieldwise lets the gate prove that fail/repair swaps re-coalesce and skip them without spawning clones (leave it undefined and SPA is still unbiased, just clone-wasteful):</p><pre><code class="language-julia hljs">Base.:(==)(a::MRState, b::MRState) =
+ clones_per_rep = res.clones_per_rep)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(estimate = [8.69785937288351, 2.8694029219693302], stderr = [1.1506340485403004, 0.24188550316040894], z_vs_oracle = [-1.7635576269479496, -2.8882078664191795], clones_per_rep = 76.14666666666666)</code></pre><p>Both components of the gradient — the failure-rate derivative IPA pinned at zero, and the repair-rate derivative — match the differentiated CTMC oracle, at the price of roughly 76 clones per replication (the <code>clones_per_rep</code> field: two coupled clones per Hahn–Jordan branch). At 800 replications the same configuration matches the oracle <code>[10.727, 3.568]</code> on both components, well within the estimator&#39;s <code>|z| &lt; 4</code> exit criterion — and the <a href="../branchable/">branchable-world interface</a> page shows the same oracle reproduced through a world with no ChronoSim in it at all.</p><h2 id="The-SPA-estimator,-on-the-packaged-world"><a class="docs-heading-anchor" href="#The-SPA-estimator,-on-the-packaged-world">The SPA estimator, on the packaged world</a><a id="The-SPA-estimator,-on-the-packaged-world-1"></a><a class="docs-heading-anchor-permalink" href="#The-SPA-estimator,-on-the-packaged-world" title="Permalink"></a></h2><p>Smoothed perturbation analysis (<a href="../reference/#ClockGradients.spa_gradient"><code>spa_gradient</code></a>) targets the same order-sensitive regime as branching but <em>conditions</em> instead of <em>splitting</em>: its estimate is the pathwise (IPA) term plus a hazard-weighted boundary term at each event-order swap. It needs the same live branchable world — the ChronoSim extension supplies a matching <code>spa_gradient(sim_factory, initializer, model, θ, fn)</code> convenience method, the SPA analogue of the branching call above — but here we run it through the packaged <a href="../reference/#ClockGradients.ClockWorld"><code>ClockWorld</code></a>, which turns the pure five-function model into a branchable world with no framework at all, so the model is its own twin.</p><p>SPA&#39;s criticality gate decides which order swaps can move the functional by firing candidate pairs in both orders and comparing the resulting states, so it needs the model&#39;s state to compare by value. <code>MRState</code> carries arrays, whose default <code>==</code> is identity; defining it fieldwise lets the gate prove that fail/repair swaps re-coalesce and skip them without spawning clones (leave it undefined and SPA is still unbiased, just clone-wasteful):</p><pre><code class="language-julia hljs">Base.:(==)(a::MRState, b::MRState) =
     a.up == b.up &amp;&amp; a.queue == b.queue &amp;&amp; a.nfail == b.nfail
 Base.hash(s::MRState, h::UInt) = hash(s.nfail, hash(s.queue, hash(s.up, h)))
 
@@ -214,9 +233,9 @@ spa = spa_gradient(() -&gt; ClockWorld(model, θ0; seed=3), model, θ0, failcoun
  ipa_part = spa.ipa_part,
  z_vs_oracle = [(spa.estimate[1] - oracle_dfail) / spa.stderr[1],
                 (spa.estimate[2] - oracle_dfail_μ) / spa.stderr[2]],
- skip_fraction = spa.skip_fraction, clones_per_rep = spa.clones_per_rep)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(estimate = [10.69867499379913, 3.698772772532906], stderr = [0.3567443798772009, 0.11023467181973705], ipa_part = [0.0, 0.0], z_vs_oracle = [-0.07959153056145514, 1.1861443900040747], skip_fraction = 0.5144513774429009, clones_per_rep = 65.988)</code></pre><p>The whole derivative lives in the boundary term — <code>ipa_part</code> is pinned at zero, exactly as the frozen-order pathwise replay must be on a terminal count — and SPA recovers both components of the oracle <code>[10.727, 3.568]</code>. The gate skipped a sizeable fraction of the candidate swaps (<code>skip_fraction</code>) without a single clone. At a comparable clone budget the per-epoch conditioning is tighter than branching&#39;s Hahn–Jordan split: the suite measures SPA&#39;s standard error 2.2–2.5× smaller than branching&#39;s on this functional (the ≈5× variance×time advantage).</p><p>The default <code>HazardWeight</code> strategy makes every enabled non-winner a candidate. The optional <a href="../reference/#ClockGradients.TruncatedHazard"><code>TruncatedHazard</code></a> strategy instead prices only the observed next event, through the tenth branchable verb <a href="../reference/#ClockGradients.branch_schedule"><code>branch_schedule</code></a> — several times fewer clones at a wider standard error, a wall-clock tradeoff rather than a dominance:</p><pre><code class="language-julia hljs">spa_tr = spa_gradient(() -&gt; ClockWorld(model, θ0; seed=3), model, θ0, failcount;
+ skip_fraction = spa.skip_fraction, clones_per_rep = spa.clones_per_rep)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(estimate = [10.36784655900183, 3.619586524299348], stderr = [0.34431735853453466, 0.11027289983492057], ipa_part = [0.0, 0.0], z_vs_oracle = [-1.0432882836341077, 0.46763973203353626], skip_fraction = 0.512764736094746, clones_per_rep = 64.508)</code></pre><p>The whole derivative lives in the boundary term — <code>ipa_part</code> is pinned at zero, exactly as the frozen-order pathwise replay must be on a terminal count — and SPA recovers both components of the oracle <code>[10.727, 3.568]</code>. The gate skipped a sizeable fraction of the candidate swaps (<code>skip_fraction</code>) without a single clone. At a comparable clone budget the per-epoch conditioning is tighter than branching&#39;s Hahn–Jordan split: SPA&#39;s standard error is roughly a factor of two smaller than branching&#39;s on this functional (a severalfold variance×time advantage).</p><p>The default <code>HazardWeight</code> strategy makes every enabled non-winner a candidate. The optional <a href="../reference/#ClockGradients.TruncatedHazard"><code>TruncatedHazard</code></a> strategy instead prices only the observed next event, through the tenth branchable verb <a href="../reference/#ClockGradients.branch_schedule"><code>branch_schedule</code></a> — several times fewer clones at a wider standard error, a wall-clock tradeoff rather than a dominance:</p><pre><code class="language-julia hljs">spa_tr = spa_gradient(() -&gt; ClockWorld(model, θ0; seed=3), model, θ0, failcount;
                       nreps=500, horizon=horizon, seed=99,
                       strategy=TruncatedHazard())
 (estimate = spa_tr.estimate,
  clones_per_rep = spa_tr.clones_per_rep,
- fraction_of_hazardweight_clones = spa_tr.clones_per_rep / spa.clones_per_rep)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(estimate = [10.615588551520226, 3.7368700199376756], clones_per_rep = 10.444, fraction_of_hazardweight_clones = 0.15827120082439233)</code></pre><p>Where the derivative is carried by a contended <em>first passage</em> rather than a count — the case IPA gets sign-wrong — SPA recovers the correct sign by the same boundary mechanism; <a href="../choosing/">Choosing an estimator</a> and the <a href="../invariants/">validity table</a> carry those measured numbers.</p><h2 id="What-to-take-away"><a class="docs-heading-anchor" href="#What-to-take-away">What to take away</a><a id="What-to-take-away-1"></a><a class="docs-heading-anchor-permalink" href="#What-to-take-away" title="Permalink"></a></h2><p>The workflow starts with the same three calls: declare the functional, simulate and ingest records once, and run <a href="../reference/#ClockGradients.paired_estimate"><code>paired_estimate</code></a> (or its simulate-and-estimate driver). The verdict tells you whether the tight IPA number is trustworthy; where it is not, the score estimate on the very same records is unbiased, and the two clone-based estimators — which need the live world, not a record — cover the order-sensitive functionals whose score variance is too large: SPA where its extra requirements hold (a pure model twin, value-<code>==</code> states, no mid-flight re-evaluation) and branching otherwise. The full validity map, with the measured evidence, is the <a href="../invariants/">validity table</a>; <a href="../requirements/">Model and distribution requirements</a> is the checklist of what each estimator demands of a model&#39;s clock distributions.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../branchable/">« The branchable-world interface</a><a class="docs-footer-nextpage" href="../invariants/">Validity and invariants »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Tuesday 14 July 2026 01:50">Tuesday 14 July 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+ fraction_of_hazardweight_clones = spa_tr.clones_per_rep / spa.clones_per_rep)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(estimate = [9.78252760241673, 2.8526117801507067], clones_per_rep = 10.404, fraction_of_hazardweight_clones = 0.16128232157251815)</code></pre><p>Where the derivative is carried by a contended <em>first passage</em> rather than a count — the case IPA gets sign-wrong — SPA recovers the correct sign by the same boundary mechanism; <a href="../choosing/">Choosing an estimator</a> and the <a href="../invariants/">validity table</a> carry those measured numbers.</p><h2 id="What-to-take-away"><a class="docs-heading-anchor" href="#What-to-take-away">What to take away</a><a id="What-to-take-away-1"></a><a class="docs-heading-anchor-permalink" href="#What-to-take-away" title="Permalink"></a></h2><p>The workflow starts with the same three calls: declare the functional, simulate and ingest records once, and run <a href="../reference/#ClockGradients.paired_estimate"><code>paired_estimate</code></a> (or its simulate-and-estimate driver). The verdict tells you whether the tight IPA number is trustworthy; where it is not, the score estimate on the very same records is unbiased, and the two clone-based estimators — which need the live world, not a record — cover the order-sensitive functionals whose score variance is too large: SPA where its extra requirements hold (a pure model twin, value-<code>==</code> states, no mid-flight re-evaluation) and branching otherwise. The full validity map, with the measured evidence, is the <a href="../invariants/">validity table</a>; <a href="../requirements/">Model and distribution requirements</a> is the checklist of what each estimator demands of a model&#39;s clock distributions.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../branchable/">« The branchable-world interface</a><a class="docs-footer-nextpage" href="../invariants/">Validity and invariants »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Thursday 16 July 2026 01:35">Thursday 16 July 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
