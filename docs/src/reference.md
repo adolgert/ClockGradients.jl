@@ -37,6 +37,17 @@ fire
 sync_enabling_times!
 ```
 
+Three optional extensions with non-breaking defaults. A model may report which
+places a firing changed and maintain its enabled set incrementally from that
+report instead of recomputing it from scratch, and it may supply the whole-state
+equality the estimators use for speculative comparisons.
+
+```@docs
+fire_changes
+enabled_update
+states_equal
+```
+
 ## Records
 
 ```@docs
@@ -112,6 +123,7 @@ branch_enabled_ages
 branch_clock_distribution
 branch_state
 check_branchable
+check_enabled_update
 capability_report
 ```
 
