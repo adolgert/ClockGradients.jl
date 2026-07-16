@@ -254,82 +254,14 @@ end
 #
 # The live world is test_branching.jl's BranchRepairModel (a real ChronoSim
 # SimulationFSM with the four-argument θ seam) driven through the package
-# extension; the estimator's state logic runs on TwinRepair, a hand-written
-# PURE twin of the same law whose clock keys match ChronoSim's clock_key
-# convention ((:Fail, i) per machine; a single (:Repair,) clock). The twin
-# audit compares the two enabled sets at every epoch, so a wrong twin fails
-# loudly — pinned below with a twin whose enabled rule never cancels.
-
-module SpaTwinRepair
-
-using Distributions
-import ClockGradients: initial_state, clockkeytype, enabled, clock_distribution, fire
-
-export TwinRepair, TwinRepairState, WrongTwinRepair
-
-struct TwinRepairState
-    up::Vector{Bool}
-    nfail::Int
-end
-Base.:(==)(a::TwinRepairState, b::TwinRepairState) =
-    a.up == b.up && a.nfail == b.nfail
-
-"The pure model-contract twin of test_branching.jl's BranchRepairModel."
-struct TwinRepair
-    nmachines::Int
-end
-initial_state(m::TwinRepair) = TwinRepairState(fill(true, m.nmachines), 0)
-clockkeytype(::TwinRepair) = Tuple
-function enabled(m::TwinRepair, s::TwinRepairState)
-    ks = Tuple[]
-    for i in 1:m.nmachines
-        s.up[i] && push!(ks, (:Fail, i))
-    end
-    any(!, s.up) && push!(ks, (:Repair,))
-    ks
-end
-clock_distribution(::TwinRepair, θ, key::Tuple) =
-    key[1] === :Fail ? Exponential(one(eltype(θ)) / θ[1]) :
-                       Exponential(one(eltype(θ)) / θ[2])
-function fire(::TwinRepair, s::TwinRepairState, key::Tuple)
-    up = copy(s.up)
-    if key[1] === :Fail
-        up[key[2]] = false
-        return TwinRepairState(up, s.nfail + 1)
-    end
-    # ChronoSim's Repair event repairs the first down machine in index order.
-    for i in eachindex(up)
-        if !up[i]
-            up[i] = true
-            return TwinRepairState(up, s.nfail)
-        end
-    end
-    TwinRepairState(up, s.nfail)
-end
-
-"A deliberately wrong twin: its enabled rule never cancels a failed machine's
-fail clock, so the twin audit must throw at the first post-failure epoch."
-struct WrongTwinRepair
-    nmachines::Int
-end
-initial_state(m::WrongTwinRepair) = initial_state(TwinRepair(m.nmachines))
-clockkeytype(::WrongTwinRepair) = Tuple
-function enabled(m::WrongTwinRepair, s::TwinRepairState)
-    ks = Tuple[(:Fail, i) for i in 1:m.nmachines]   # never cancels
-    any(!, s.up) && push!(ks, (:Repair,))
-    ks
-end
-clock_distribution(::WrongTwinRepair, θ, key::Tuple) =
-    clock_distribution(TwinRepair(0), θ, key)
-fire(::WrongTwinRepair, s::TwinRepairState, key::Tuple) =
-    fire(TwinRepair(0), s, key)
-
-end # module SpaTwinRepair
-
-using .SpaTwinRepair: TwinRepair, WrongTwinRepair
+# extension; the estimator's state logic runs on the shared pure MachineRepair
+# model (machinerepair.jl), the model-contract twin of the same law with indexed
+# FIFO clocks ((:Fail, i) per machine; (:Repair, i) keyed on the queue head). The
+# twin audit compares the two enabled sets at every epoch, so a wrong twin fails
+# loudly — pinned below with WrongModel, whose enabled rule never cancels.
 
 testset_if("spa: through a real ChronoSim simulation with a pure model twin SPA matches the CTMC gradient for both parameters and both weight strategies") do
-    twin = TwinRepair(_BR_N)
+    twin = MachineRepair(_BR_N)
     oracle = [ForwardDiff.derivative(l -> expected_failures_ctmc(l, _BR_μ, _BR_N, _BR_T), _BR_λ),
               ForwardDiff.derivative(m -> expected_failures_ctmc(_BR_λ, m, _BR_N, _BR_T), _BR_μ)]
     fn = TerminalObservable(s -> s.nfail)
@@ -350,7 +282,7 @@ testset_if("spa: a wrong model twin is caught by the per-epoch enabled-set audit
     fn = TerminalObservable(s -> s.nfail)
     err = try
         spa_gradient(branch_sim_factory, BranchRepairModel.repair_initializer,
-                     WrongTwinRepair(_BR_N), _BR_θ, fn;
+                     WrongModel(MachineRepair(_BR_N)), _BR_θ, fn;
                      nreps=20, horizon=_BR_T, seed=7)
         nothing
     catch e

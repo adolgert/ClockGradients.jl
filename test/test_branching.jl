@@ -42,9 +42,15 @@ end
 # `nfail` is a plain scalar passenger: no enable/precondition reads it, so it
 # never generates a clock; a clone copies it by value, which is what lets the
 # branch difference f⁺ − f⁻ cancel the shared prefix for a count functional.
+# `head` is an observed scalar (0 = idle) tracked as place `(:head,)`: the single
+# stable handle the FIFO repair precondition reads. `order` is a plain-Vector
+# passenger carrying FIFO order; its in-place push!/popfirst! are NOT tracked and
+# it is touched only inside `fire!`, never by a precondition/enable.
 @observedphysical MachineRepairState begin
     machine::ObservedVector{Machine,Member}
     nfail::Int
+    head::Int
+    order::Vector{Int}
 end
 
 function MachineRepairState(n::Int)
@@ -52,7 +58,7 @@ function MachineRepairState(n::Int)
     for i in 1:n
         m[i] = Machine(false)
     end
-    return MachineRepairState(m, 0)
+    return MachineRepairState(m, 0, 0, Int[])
 end
 
 struct Fail <: SimEvent
@@ -70,33 +76,43 @@ end
 # The θ seam: per-up-machine failure rate is λ = θ[1]; rate λ is Exponential(1/λ).
 enable(::Fail, physical, θ, when) = (Exponential(inv(θ[1])), when)
 
-# Machine i fails AND the cumulative failure counter advances.
+# Machine i fails, joins the FIFO order (becoming head if the repairman is idle),
+# AND the cumulative failure counter advances.
 function fire!(evt::Fail, physical, when, rng)
     physical.machine[evt.idx].up = false
+    push!(physical.order, evt.idx)
+    if physical.head == 0
+        physical.head = evt.idx
+    end
     physical.nfail += 1
     return nothing
 end
 
-struct Repair <: SimEvent end
+# Indexed by the machine i under repair; the single repairman serves the FIFO head.
+struct Repair <: SimEvent
+    i::Int
+end
 
-@guard precondition(evt::Repair, physical) =
-    any(!physical.machine[i].up for i in eachindex(physical.machine))
+# Reads ONLY `(:head,)`: never scan `order`/`machine` here, or the enlarged
+# read-set would force a spurious resample and break the KEEP semantics that let
+# the head clock retain its enabling time while a different machine fails behind it.
+@guard precondition(evt::Repair, physical) = physical.head == evt.i
 
 @conditionsfor Repair begin
+    # ChronoSim cannot @reactto changed(head) on a bare top-level scalar, so we
+    # trigger off the co-occurring machine[i].up write and read head in the body.
     @reactto changed(machine[i].up) do physical
-        generate(Repair())
+        physical.head != 0 && generate(Repair(physical.head))
     end
 end
 
+# Leave reenable at its default: KEEP is automatic given the stable read-set.
 enable(::Repair, physical, θ, when) = (Exponential(inv(θ[2])), when)
 
-function fire!(::Repair, physical, when, rng)
-    for i in eachindex(physical.machine)
-        if !physical.machine[i].up
-            physical.machine[i].up = true
-            return nothing
-        end
-    end
+function fire!(evt::Repair, physical, when, rng)
+    physical.machine[evt.i].up = true
+    popfirst!(physical.order)
+    physical.head = isempty(physical.order) ? 0 : first(physical.order)
     return nothing
 end
 

@@ -6,7 +6,7 @@ using ClockGradients: GradientRecord, TerminalObservable, IntegratedOccupancy,
 # back-references are irrelevant to functional lowering (it reads only the key
 # sequence, the times, and the horizon), so they are NaN/zero placeholders.
 const MINI_MODEL = MachineRepair(2)
-const MINI_KEYS = [(:fail, 1), (:fail, 2), (:repair, 1)]
+const MINI_KEYS = [(:Fail, 1), (:Fail, 2), (:Repair, 1)]
 const MINI_TIMES = [1.0, 2.0, 3.0]
 const MINI_HORIZON = 5.0
 const MINI_REC = GradientRecord{Tuple{Symbol,Int}}(
@@ -29,7 +29,7 @@ testset_if("functionals: the down-machine count lowers as an IntegratedOccupancy
 end
 
 testset_if("functionals: first passage to both machines down lowers to the time of the firing that first satisfies the predicate") do
-    # Both machines are down only after firing 2 (state after (:fail,2)); the
+    # Both machines are down only after firing 2 (state after (:Fail,2)); the
     # hitting step is 2 and its time is 2.0.
     fn = FirstPassageTime(s -> ndown(s) == 2)
     low = lower(fn, MINI_MODEL, MINI_REC)
