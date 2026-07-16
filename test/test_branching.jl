@@ -45,7 +45,8 @@ end
 # `head` is an observed scalar (0 = idle) tracked as place `(:head,)`: the single
 # stable handle the FIFO repair precondition reads. `order` is a plain-Vector
 # passenger carrying FIFO order; its in-place push!/popfirst! are NOT tracked and
-# it is touched only inside `fire!`, never by a precondition/enable.
+# it is touched only inside `fire!` and the initializer, never by a
+# precondition/enable.
 @observedphysical MachineRepairState begin
     machine::ObservedVector{Machine,Member}
     nfail::Int
