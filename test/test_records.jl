@@ -3,7 +3,7 @@ using CompetingClocks: recorded_firings
 
 const REC_MODEL = MachineRepair(5)
 const REC_THETA = [0.5, 1.5]
-const REC_HORIZON = 8.0
+const REC_HORIZON = 16.0
 const REC_METHODS = (FirstReactionMethod(), NextReactionMethod())
 
 testset_if("records: the Bookkeeper te reconstruction equals the recorder-stamped te on every firing and both samplers, so recorder ingestion passes the two-sided audit") do
