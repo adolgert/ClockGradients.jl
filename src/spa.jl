@@ -59,13 +59,11 @@ orders. Relies on `fire` being pure and on value `==` for the model's state
 type — a soft contract demand beyond the branchable verbs.
 """
 function commuting_pair(model, s_pre, ekey, cand)
-    Phase0.@p0time :spa_gate begin
-        s1 = fire(model, s_pre, ekey)
-        cand in enabled(model, s1) || return false
-        s2 = fire(model, s_pre, cand)
-        ekey in enabled(model, s2) || return false
-        fire(model, s1, cand) == fire(model, s2, ekey)
-    end
+    s1 = fire(model, s_pre, ekey)
+    cand in enabled(model, s1) || return false
+    s2 = fire(model, s_pre, cand)
+    ekey in enabled(model, s2) || return false
+    fire(model, s1, cand) == fire(model, s2, ekey)
 end
 
 # First passage's cheap universal early-out: once the shared prefix has hit
@@ -89,13 +87,11 @@ near-threshold fail/repair swaps that carry the entire order derivative (the
 sign-flip regime).
 """
 zero_jump_certified(fn::PathFunctional, model, s_pre, ekey, cand) =
-    Phase0.@p0time :spa_gate_zjc commuting_pair(model, s_pre, ekey, cand)
+    commuting_pair(model, s_pre, ekey, cand)
 
 function zero_jump_certified(fn::FirstPassageTime, model, s_pre, ekey, cand)
-    Phase0.@p0time :spa_gate_zjc begin
-        commuting_pair(model, s_pre, ekey, cand) || return false
-        fn.pred(fire(model, s_pre, ekey)) == fn.pred(fire(model, s_pre, cand))
-    end
+    commuting_pair(model, s_pre, ekey, cand) || return false
+    fn.pred(fire(model, s_pre, ekey)) == fn.pred(fire(model, s_pre, cand))
 end
 
 # --- the DNP/PP clone pair ------------------------------------------------------
@@ -122,22 +118,19 @@ end
 # numbers) so the post-pair randomness cancels in L(PP) − L(DNP).
 
 # Drive a clone by peek/commit to the horizon, collecting (key, time).
-function _spa_run_collect!(w, horizon::Float64, K::Type; trace=nothing)
-    Phase0.@p0time :spa_run_collect begin
-        ks = K[]
-        ts = Float64[]
-        while true
-            pk = branch_peek(w)
-            pk === nothing && break
-            (t, key) = pk
-            t <= horizon || break
-            branch_commit!(w, key, t)
-            trace === nothing || push!(trace, Phase0.SNAPSHOT[](w))
-            push!(ks, key)
-            push!(ts, t)
-        end
-        (ks, ts)
+function _spa_run_collect!(w, horizon::Float64, K::Type)
+    ks = K[]
+    ts = Float64[]
+    while true
+        pk = branch_peek(w)
+        pk === nothing && break
+        (t, key) = pk
+        t <= horizon || break
+        branch_commit!(w, key, t)
+        push!(ks, key)
+        push!(ts, t)
     end
+    (ks, ts)
 end
 
 # Drive a clone until the first-passage predicate holds, FOLDING THE TWIN
@@ -146,21 +139,18 @@ end
 # never reads `branch_state` — the live world contributes only keys, times,
 # clones, and streams. NaN when the enabled set empties or the step budget
 # runs out (a censored jump, reported upward).
-function _spa_run_to_hit!(w, model, s_twin, pred, budget::Int; trace=nothing)
-    Phase0.@p0time :spa_run_to_hit begin
-        steps = 0
-        while steps < budget
-            pk = branch_peek(w)
-            pk === nothing && return NaN
-            (t, key) = pk
-            branch_commit!(w, key, t)
-            trace === nothing || push!(trace, Phase0.SNAPSHOT[](w))
-            s_twin = fire(model, s_twin, key)
-            pred(s_twin) && return t
-            steps += 1
-        end
-        return NaN
+function _spa_run_to_hit!(w, model, s_twin, pred, budget::Int)
+    steps = 0
+    while steps < budget
+        pk = branch_peek(w)
+        pk === nothing && return NaN
+        (t, key) = pk
+        branch_commit!(w, key, t)
+        s_twin = fire(model, s_twin, key)
+        pred(s_twin) && return t
+        steps += 1
     end
+    return NaN
 end
 
 # One constructed path's functional value: clone the pre-commit world, rekey to
@@ -174,8 +164,8 @@ end
 function _spa_forced_value(fn::PathFunctional, model, s_pre, preclone, first_key,
                            second_key, tk::Float64, seed::UInt64,
                            prefix_keys::Vector, prefix_times::Vector{Float64},
-                           horizon::Float64, fpt_budget::Int; trace=nothing)
-    cl = Phase0.@p0time :spa_pair_clone branch_clone(preclone)
+                           horizon::Float64, fpt_budget::Int)
+    cl = branch_clone(preclone)
     branch_rekey!(cl, seed)
     K = clockkeytype(model)
     forced_keys = K[first_key]
@@ -191,19 +181,15 @@ function _spa_forced_value(fn::PathFunctional, model, s_pre, preclone, first_key
         push!(forced_times, tk)
         s_twin = fire(model, s_twin, second_key)
     end
-    # One snapshot after the forced fires complete, before the continuation.
-    trace === nothing || push!(trace, Phase0.SNAPSHOT[](cl))
     if fn isa FirstPassageTime
         fn.pred(s_twin) && return tk
-        return _spa_run_to_hit!(cl, model, s_twin, fn.pred, fpt_budget; trace=trace)
+        return _spa_run_to_hit!(cl, model, s_twin, fn.pred, fpt_budget)
     end
-    (ck, ct) = _spa_run_collect!(cl, horizon, K; trace=trace)
-    keys_full, times_full = Phase0.@p0time :spa_vcat (vcat(prefix_keys, forced_keys, ck),
-                                                      vcat(prefix_times, forced_times, ct))
-    return Phase0.@p0time :spa_functional begin
-        low = lower(fn, model, keys_full, horizon)
-        Float64(evaluate(low, times_full))
-    end
+    (ck, ct) = _spa_run_collect!(cl, horizon, K)
+    keys_full = vcat(prefix_keys, forced_keys, ck)
+    times_full = vcat(prefix_times, forced_times, ct)
+    low = lower(fn, model, keys_full, horizon)
+    return Float64(evaluate(low, times_full))
 end
 
 # One coupled clone-pair estimate of L(PP) − L(DNP) for (winner ekey,
@@ -213,19 +199,12 @@ function _spa_clone_jump(fn::PathFunctional, model, s_pre, preclone, ekey, ckey,
                          tk::Float64, est_rng::AbstractRNG, prefix_keys::Vector,
                          prefix_times::Vector{Float64}, horizon::Float64,
                          fpt_budget::Int)
-    Phase0.@p0time :spa_pair begin
-        # Coalescence probe: record the DNP/PP continuation state traces.
-        record = Phase0.COALESCE[] && length(Phase0.COALESCE_LOG) < Phase0.COALESCE_CAP[]
-        ta = record ? Any[] : nothing
-        tb = record ? Any[] : nothing
-        seedk = rand(est_rng, UInt64)
-        l_dnp = _spa_forced_value(fn, model, s_pre, preclone, ekey, ckey, tk, seedk,
-                                  prefix_keys, prefix_times, horizon, fpt_budget; trace=ta)
-        l_pp = _spa_forced_value(fn, model, s_pre, preclone, ckey, ekey, tk, seedk,
-                                 prefix_keys, prefix_times, horizon, fpt_budget; trace=tb)
-        record && push!(Phase0.COALESCE_LOG, (kind=:spa, a=ta, b=tb))
-        l_pp - l_dnp
-    end
+    seedk = rand(est_rng, UInt64)
+    l_dnp = _spa_forced_value(fn, model, s_pre, preclone, ekey, ckey, tk, seedk,
+                              prefix_keys, prefix_times, horizon, fpt_budget)
+    l_pp = _spa_forced_value(fn, model, s_pre, preclone, ckey, ekey, tk, seedk,
+                             prefix_keys, prefix_times, horizon, fpt_budget)
+    return l_pp - l_dnp
 end
 
 # --- weight strategies ----------------------------------------------------------
@@ -293,27 +272,25 @@ _horizon_jump(fn::PathFunctional, model, s_end, key) = 0.0
 # candidate that never fires exists only here — state the estimator owns
 # because nothing else provides it.
 function _spa_update_enabled!(enabled_at::Dict, enab_state::Dict, model, s_pre, fired, k::Int)
-    Phase0.@p0time :spa_twin_fold begin
-        old = enabled(model, s_pre)
-        snew = fire(model, s_pre, fired)
-        newk = enabled(model, snew)
-        delete!(enabled_at, fired)
-        delete!(enab_state, fired)
-        for kk in old
-            kk == fired && continue
-            if !(kk in newk)
-                delete!(enabled_at, kk)
-                delete!(enab_state, kk)
-            end
+    old = enabled(model, s_pre)
+    snew = fire(model, s_pre, fired)
+    newk = enabled(model, snew)
+    delete!(enabled_at, fired)
+    delete!(enab_state, fired)
+    for kk in old
+        kk == fired && continue
+        if !(kk in newk)
+            delete!(enabled_at, kk)
+            delete!(enab_state, kk)
         end
-        for kk in newk
-            if !haskey(enabled_at, kk)
-                enabled_at[kk] = k
-                enab_state[kk] = snew
-            end
-        end
-        snew
     end
+    for kk in newk
+        if !haskey(enabled_at, kk)
+            enabled_at[kk] = k
+            enab_state[kk] = snew
+        end
+    end
+    snew
 end
 
 # The model-twin audit. A framework world is not built from the pure model the
@@ -322,7 +299,6 @@ end
 # wrong. One set comparison per epoch catches the drift at its first
 # appearance.
 function _spa_twin_audit(enabled_at::Dict, agepairs, k::Int)
-    Phase0.@p0time :spa_twin_audit begin
     twin = Set(keys(enabled_at))
     live = Set(first.(agepairs))
     twin == live && return nothing
@@ -334,7 +310,6 @@ function _spa_twin_audit(enabled_at::Dict, agepairs, k::Int)
         "model: $missing_twin; enabled in the model but not the world: " *
         "$extra_twin. The model handed to spa_gradient must be the exact " *
         "pure twin of the law the world simulates."))
-    end
 end
 
 # --- one replication --------------------------------------------------------------
@@ -342,7 +317,6 @@ end
 function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
                           strategy::WeightStrategy, horizon::Float64,
                           est_rng::AbstractRNG, jump_override, fpt_budget::Int)
-    Phase0.@p0time :spa_replication begin
     K = clockkeytype(model)
     s0 = initial_state(model)
     St = typeof(s0)
@@ -381,7 +355,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
             if jump_override !== nothing
                 jump_override(model, s_pre, ekey, ckey)
             else
-                preclone === nothing && (preclone = Phase0.@p0time :spa_pair_clone branch_clone(w))
+                preclone === nothing && (preclone = branch_clone(w))
                 nclones += 2
                 _spa_clone_jump(fn, model, s_pre, preclone, ekey, ckey, tk, est_rng,
                                 keys_tr, times_tr, horizon, fpt_budget)
@@ -401,12 +375,12 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
                 end
                 push!(cands, _candidate(ckey, Inf))
             end
-            Phase0.@p0time :spa_commit branch_commit!(w, ekey, tk)
+            branch_commit!(w, ekey, tk)
         else
             # TruncatedHazard: the candidate is the NEXT winner, known only
             # after the commit — so the pre-commit clone is taken every epoch.
             preclone = branch_clone(w)
-            Phase0.@p0time :spa_commit branch_commit!(w, ekey, tk)
+            branch_commit!(w, ekey, tk)
             nx = branch_peek(w)
             if nx !== nothing && nx[1] <= horizon
                 cnext = nx[2]
@@ -461,14 +435,14 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
             "re-evaluated candidate (its last-segment conditional law) has not " *
             "been prototyped. Use the score estimator, or an all-frozen model."))
     end
-    ipa = Phase0.@p0time :spa_ipa ipa_gradient(model, θ0, record, fn)
+    ipa = ipa_gradient(model, θ0, record, fn)
 
     D = length(θ0)
     boundary = zeros(D)
     ncensored = 0
     if !isempty(cands)
         J = isempty(keys_tr) ? zeros(0, D) :
-            Phase0.@p0time :spa_boundary ForwardDiff.jacobian(θ -> replay_times(model, θ, record), θ0)
+            ForwardDiff.jacobian(θ -> replay_times(model, θ, record), θ0)
         for c in cands
             if isnan(c.jump)
                 ncensored += 1
@@ -500,7 +474,6 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
 
     (ipa=ipa, boundary=boundary, ncand=ncand, nskip=nskip, nclones=nclones,
      ncensored=ncensored)
-    end
 end
 
 # --- the public estimator ----------------------------------------------------------
