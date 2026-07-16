@@ -121,6 +121,61 @@ enabled — never a rate — depends on θ.
 function fire end
 
 """
+    states_equal(model, a, b) -> Bool
+
+Whole-state value equality for the model's state type, part of the pure-model
+contract. The estimators compare whole states in two places — the SPA commuting
+gate (does firing a pair in both orders re-coalesce?) and the incremental-contract
+conformance checker (does `fire_changes` agree with `fire`?) — and both must use
+VALUE equality, not object identity.
+
+The default is `a == b`, which is correct for any state type that defines a
+fieldwise `==` (a hand-written twin, a `@keyedby` element). A framework whose
+top-level state type does NOT define a value `==` (so `==` would fall back to
+identity `===` and silently disable the gate) overrides this method to supply the
+structural comparison, keeping the dependency on that framework's internals
+confined to one explicit method rather than pirating `Base.:(==)`.
+"""
+states_equal(model, a, b) = a == b
+
+"""
+    fire_changes(model, state, key) -> (new_state, changed)
+
+Like [`fire`](@ref), but ALSO returns `changed`: an opaque description of what
+the firing modified, meaningful only to the same model's [`enabled_update`](@ref).
+`changed === nothing` means "unknown", and a consumer must then fall back to a
+full [`enabled`](@ref) recomputation. The default is exactly that fallback, so a
+model that defines only `fire` keeps working unchanged.
+
+A model that implements the incremental form returns from `changed` whatever its
+`enabled_update` needs (for a framework-derived twin, typically the set of
+modified place addresses the firing already computes). The core never inspects
+`changed`; it only threads it from here into `enabled_update`.
+"""
+fire_changes(model, state, key) = (fire(model, state, key), nothing)
+
+"""
+    enabled_update(model, new_state, fired_key, prev_enabled, changed) -> iterable of keys
+
+The enabled set of `new_state`, given that `new_state` was produced by firing
+`fired_key` from a state whose enabled set was `prev_enabled`, with write-set
+`changed` as returned by [`fire_changes`](@ref). This is an OPTIONAL incremental
+form of [`enabled`](@ref); the default ignores `prev_enabled`/`changed` and calls
+`enabled(model, new_state)`, so a model that defines only `enabled` keeps working
+unchanged.
+
+An implementation MUST return a value equal — element for element and in the same
+order — to `enabled(model, new_state)`. It MUST NOT mutate `prev_enabled`: the
+commuting gate reuses one `prev_enabled` for two speculative branches, so a
+mutation would corrupt the second. `prev_enabled` is always a value previously
+returned by `enabled` or `enabled_update` for the PRE-fire state, so a model may
+return its own richer `AbstractVector` subtype from those functions and exploit
+its bookkeeping here.
+"""
+enabled_update(model, new_state, fired_key, prev_enabled, changed) =
+    enabled(model, new_state)
+
+"""
     sync_enabling_times!(te::AbstractDict{K,V}, enabled_keys, now) -> te
 
 Apply the GSMP clock-retention rule to the enabling-time table `te` in place:

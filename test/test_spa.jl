@@ -291,3 +291,179 @@ testset_if("spa: a wrong model twin is caught by the per-epoch enabled-set audit
     @test err isa ArgumentError
     @test occursin("model-twin audit failed", err.msg)
 end
+
+# --- SPA through the DERIVED model twin (Repairs A and B) ----------------------
+#
+# The derived twin is a ChronoSim.GsmpModel built from the SAME event families
+# the live world fires; the package extension implements the five contract
+# functions for it. The twin natively keys clocks by event INSTANCES, so it must
+# be paired with an instance-keyed world (Repair A). Repair B adds incremental
+# enabled-set maintenance so the derived twin scales.
+
+# A world that speaks INSTANCE keys, the vocabulary the derived GsmpModel twin
+# speaks. Mirrors branch_sim_factory but opts into event-instance keys.
+branch_sim_factory_instance() = ChronoSim.SimulationFSM(
+    BranchRepairModel.MachineRepairState(_BR_N), BranchRepairModel.repair_events();
+    seed=UInt64(1),
+    key_type=ChronoSim.event_key_union((BranchRepairModel.Fail, BranchRepairModel.Repair)),
+    params=_BR_θ)
+
+# The derived twin: a ChronoSim.GsmpModel over the live model's event families,
+# with the all-up point-mass initial law.
+_branch_derived_model() = ChronoSim.GsmpModel(
+    events=(BranchRepairModel.Fail, BranchRepairModel.Repair),
+    initial=() -> begin
+        s = BranchRepairModel.MachineRepairState(_BR_N)
+        for i in 1:_BR_N
+            s.machine[i].up = true
+        end
+        s
+    end,
+    params=(:lambda, :mu))
+
+testset_if("spa: a tuple-keyed world with a derived twin is refused with the named key-vocabulary error at construction") do
+    # A3 (was the A0 reproduction): the derived GsmpModel keys clocks by event
+    # instances; branch_sim_factory builds a TUPLE-keyed world. The extension's
+    # convenience method now refuses the mismatch at construction with an
+    # actionable message naming event_key_union, instead of the confusing
+    # epoch-1 audit dump.
+    dm = _branch_derived_model()
+    fn = ClockGradients.TerminalObservable(s -> s.nfail)
+    err = try
+        spa_gradient(branch_sim_factory, BranchRepairModel.repair_initializer,
+                     dm, _BR_θ, fn; nreps=20, horizon=_BR_T, seed=2027)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("event_key_union", err.msg)
+    @test !occursin("audit", err.msg)
+end
+
+testset_if("spa: a world whose keys are not instances of the twin's clockkeytype is refused before the first audit") do
+    # A3, the framework-agnostic core guard: calling the CORE spa_gradient
+    # directly (bypassing the extension convenience method) with a tuple-keyed
+    # world and the derived twin trips the generic vocabulary check at the first
+    # peek, before the audit. This pins the guard without naming ChronoSim.
+    dm = _branch_derived_model()
+    fn = ClockGradients.TerminalObservable(s -> s.nfail)
+    world_factory = () -> begin
+        sim = branch_sim_factory()
+        ChronoSim.initialize!(ChronoSim.InitializeEvent(),
+                              BranchRepairModel.repair_initializer, sim)
+        sim
+    end
+    err = try
+        spa_gradient(world_factory, dm, _BR_θ, fn; nreps=20, horizon=_BR_T, seed=2027)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("clock-key vocabulary mismatch", err.msg)
+end
+
+testset_if("gsmp: the derived twin's enabled set equals an instance-keyed world's enabled key set step by step") do
+    # A1: with an instance-keyed world the two vocabularies agree, so the twin's
+    # enabled(model, s_twin) matches the world's branch_enabled_ages key set at
+    # every step, element type and order included.
+    dm = _branch_derived_model()
+    ord = ChronoSim.model_key_order(dm)
+    sim = branch_sim_factory_instance()
+    ChronoSim.initialize!(ChronoSim.InitializeEvent(),
+                          BranchRepairModel.repair_initializer, sim)
+    s_twin = ClockGradients.initial_state(dm)
+    for _ in 1:10
+        pk = ClockGradients.branch_peek(sim)
+        pk === nothing && break
+        (t, key) = pk
+        world_keys = sort(first.(ClockGradients.branch_enabled_ages(sim)); order=ord)
+        twin_keys = ClockGradients.enabled(dm, s_twin)
+        @test twin_keys == world_keys
+        # Same key REPRESENTATION, element for element (both instance keys, not
+        # tuples). The container's static eltype differs benignly — the world's
+        # enabled_ages is abstractly typed (SimEvent) while the twin returns the
+        # model_keytype union — so compare the concrete per-element types.
+        @test all(typeof(a) == typeof(b) for (a, b) in zip(twin_keys, world_keys))
+        ClockGradients.branch_commit!(sim, key, t)
+        s_twin = ClockGradients.fire(dm, s_twin, key)
+    end
+
+    # The cross-representation trajectory identity the whole repair leans on:
+    # the instance-keyed world's firings equal the tuple-keyed factory's at the
+    # same seed, compared as (clock_key(key), time).
+    astuple(k) = k isa ChronoSim.SimEvent ? ChronoSim.clock_key(k) : k
+    collect_firings(factory) = begin
+        s = factory()
+        ChronoSim.initialize!(ChronoSim.InitializeEvent(),
+                              BranchRepairModel.repair_initializer, s)
+        ChronoSim.rekey_streams!(s, UInt64(4242))
+        out = Tuple{Any,Float64}[]
+        for _ in 1:10
+            pk = ClockGradients.branch_peek(s)
+            pk === nothing && break
+            (t, key) = pk
+            push!(out, (astuple(key), t))
+            ClockGradients.branch_commit!(s, key, t)
+        end
+        out
+    end
+    inst = collect_firings(branch_sim_factory_instance)
+    tup = collect_firings(branch_sim_factory)
+    @test !isempty(inst)
+    @test inst == tup
+end
+
+testset_if("spa: the derived twin drives spa_gradient through an instance-keyed world and matches the CTMC gradient") do
+    # A2: the end-to-end exit criterion. The derived GsmpModel twin, paired with
+    # an instance-keyed world, must recover the machine-repair CTMC gradient with
+    # the same accuracy pattern as the hand-written twin.
+    dm = _branch_derived_model()
+    oracle = [ForwardDiff.derivative(l -> expected_failures_ctmc(l, _BR_μ, _BR_N, _BR_T), _BR_λ),
+              ForwardDiff.derivative(m -> expected_failures_ctmc(_BR_λ, m, _BR_N, _BR_T), _BR_μ)]
+    fn = ClockGradients.TerminalObservable(s -> s.nfail)
+    res = spa_gradient(branch_sim_factory_instance, BranchRepairModel.repair_initializer,
+                       dm, _BR_θ, fn; nreps=800, horizon=_BR_T, seed=2027)
+    for j in 1:2
+        @test abs(res.estimate[j] - oracle[j]) < 4 * res.stderr[j]
+        @test res.stderr[j] < abs(oracle[j]) / 4
+    end
+    @test res.ipa_part == [0.0, 0.0]
+    @test res.skip_fraction > 0.0
+end
+
+# A twin that delegates the five contract functions to a GsmpModel but
+# deliberately NOT fire_changes/enabled_update, so it runs the contract DEFAULTS
+# (full enabled recompute) through the reworked SPA call sites. Comparing it
+# against the GsmpModel proves the incremental maintenance is pure bookkeeping.
+struct FallbackTwin{M}
+    inner::M
+end
+ClockGradients.initial_state(t::FallbackTwin) = ClockGradients.initial_state(t.inner)
+ClockGradients.clockkeytype(t::FallbackTwin) = ClockGradients.clockkeytype(t.inner)
+ClockGradients.enabled(t::FallbackTwin, s) = ClockGradients.enabled(t.inner, s)
+ClockGradients.clock_distribution(t::FallbackTwin, θ::AbstractVector, key, state) =
+    ClockGradients.clock_distribution(t.inner, θ, key, state)
+ClockGradients.fire(t::FallbackTwin, s, key) = ClockGradients.fire(t.inner, s, key)
+# Delegate the whole-state equality seam too, or the commuting gate reverts to
+# identity comparison and the bit-identity comparison below diverges.
+ClockGradients.states_equal(t::FallbackTwin, a, b) =
+    ClockGradients.states_equal(t.inner, a, b)
+
+testset_if("spa: the derived-twin estimate is unchanged by incremental maintenance at a fixed seed") do
+    dm = _branch_derived_model()
+    fn = ClockGradients.TerminalObservable(s -> s.nfail)
+    inc = spa_gradient(branch_sim_factory_instance, BranchRepairModel.repair_initializer,
+                       dm, _BR_θ, fn; nreps=400, horizon=_BR_T, seed=2027)
+    fb = spa_gradient(branch_sim_factory_instance, BranchRepairModel.repair_initializer,
+                      FallbackTwin(dm), _BR_θ, fn; nreps=400, horizon=_BR_T, seed=2027)
+    # Bit-identical: incremental maintenance is bookkeeping, not a new algorithm.
+    @test inc.estimate == fb.estimate
+    @test inc.stderr == fb.stderr
+    @test inc.ipa_part == fb.ipa_part
+    @test inc.boundary_part == fb.boundary_part
+    @test inc.clones_per_rep == fb.clones_per_rep
+    @test inc.candidates_per_rep == fb.candidates_per_rep
+    @test inc.skip_fraction == fb.skip_fraction
+end
