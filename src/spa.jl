@@ -51,7 +51,7 @@
 # in the boundary term.
 
 """
-    commuting_pair(model, s_pre, en_pre, ekey, cand) -> Bool
+    commuting_pair(model, s_pre, en_pre, ekey, cand, t) -> Bool
 
 True when firing `ekey` then `cand` from `s_pre` reaches the same state as
 firing them in the opposite order, with both events surviving to fire in both
@@ -60,14 +60,14 @@ enabled sets can be maintained incrementally (`enabled_update`) rather than
 recomputed. Relies on `fire` being pure and on value `==` for the model's state
 type — a soft contract demand beyond the branchable verbs.
 """
-function commuting_pair(model, s_pre, en_pre, ekey, cand)
-    (s1, ch1) = fire_changes(model, s_pre, ekey)
+function commuting_pair(model, s_pre, en_pre, ekey, cand, t)
+    (s1, ch1) = fire_changes(model, s_pre, ekey, t)
     en1 = enabled_update(model, s1, ekey, en_pre, ch1)
     cand in en1 || return false
-    (s2, ch2) = fire_changes(model, s_pre, cand)
+    (s2, ch2) = fire_changes(model, s_pre, cand, t)
     en2 = enabled_update(model, s2, cand, en_pre, ch2)
     ekey in en2 || return false
-    states_equal(model, fire(model, s1, cand), fire(model, s2, ekey))
+    states_equal(model, fire(model, s1, cand, t), fire(model, s2, ekey, t))
 end
 
 # First passage's cheap universal early-out: once the shared prefix has hit
@@ -76,7 +76,7 @@ prefix_settles(fn::PathFunctional, hit_already::Bool) = false
 prefix_settles(fn::FirstPassageTime, hit_already::Bool) = hit_already
 
 """
-    zero_jump_certified(fn, model, s_pre, en_pre, ekey, cand) -> Bool
+    zero_jump_certified(fn, model, s_pre, en_pre, ekey, cand, t) -> Bool
 
 True when the swap's jump is PROVABLY zero for this functional. For a terminal
 or time-integral functional, state commuting suffices: the pair's intermediate
@@ -91,12 +91,12 @@ near-threshold fail/repair swaps that carry the entire order derivative (the
 sign-flip regime). `en_pre` is the enabled set of `s_pre`, threaded into the
 commuting check for incremental enabled-set maintenance.
 """
-zero_jump_certified(fn::PathFunctional, model, s_pre, en_pre, ekey, cand) =
-    commuting_pair(model, s_pre, en_pre, ekey, cand)
+zero_jump_certified(fn::PathFunctional, model, s_pre, en_pre, ekey, cand, t) =
+    commuting_pair(model, s_pre, en_pre, ekey, cand, t)
 
-function zero_jump_certified(fn::FirstPassageTime, model, s_pre, en_pre, ekey, cand)
-    commuting_pair(model, s_pre, en_pre, ekey, cand) || return false
-    fn.pred(fire(model, s_pre, ekey)) == fn.pred(fire(model, s_pre, cand))
+function zero_jump_certified(fn::FirstPassageTime, model, s_pre, en_pre, ekey, cand, t)
+    commuting_pair(model, s_pre, en_pre, ekey, cand, t) || return false
+    fn.pred(fire(model, s_pre, ekey, t)) == fn.pred(fire(model, s_pre, cand, t))
 end
 
 # --- the DNP/PP clone pair ------------------------------------------------------
@@ -151,7 +151,7 @@ function _spa_run_to_hit!(w, model, s_twin, pred, budget::Int)
         pk === nothing && return NaN
         (t, key) = pk
         branch_commit!(w, key, t)
-        s_twin = fire(model, s_twin, key)
+        s_twin = fire(model, s_twin, key, t)
         pred(s_twin) && return t
         steps += 1
     end
@@ -176,7 +176,7 @@ function _spa_forced_value(fn::PathFunctional, model, s_pre, en_pre, preclone, f
     forced_keys = K[first_key]
     forced_times = Float64[tk]
     branch_force!(cl, first_key, tk)
-    (s_twin, ch) = fire_changes(model, s_pre, first_key)
+    (s_twin, ch) = fire_changes(model, s_pre, first_key, tk)
     # A first passage hit by the FIRST forced firing is decided at tk whatever
     # the second firing does (first hit, not last), so check between forces.
     fn isa FirstPassageTime && fn.pred(s_twin) && return tk
@@ -185,7 +185,7 @@ function _spa_forced_value(fn::PathFunctional, model, s_pre, en_pre, preclone, f
         branch_force!(cl, second_key, tk)
         push!(forced_keys, second_key)
         push!(forced_times, tk)
-        s_twin = fire(model, s_twin, second_key)
+        s_twin = fire(model, s_twin, second_key, tk)
     end
     if fn isa FirstPassageTime
         fn.pred(s_twin) && return tk
@@ -267,10 +267,10 @@ end
 # the functional change is read straight off the fired state. A time-integral
 # functional's horizon jump is a zero-width interval — consistent with IPA
 # already being exact for it.
-_horizon_jump(fn::TerminalObservable, model, s_end, key) =
-    Float64(fn.g(fire(model, s_end, key)) - fn.g(s_end))
-_horizon_jump(fn::IntegratedOccupancy, model, s_end, key) = 0.0
-_horizon_jump(fn::PathFunctional, model, s_end, key) = 0.0
+_horizon_jump(fn::TerminalObservable, model, s_end, key, t) =
+    Float64(fn.g(fire(model, s_end, key, t)) - fn.g(s_end))
+_horizon_jump(fn::IntegratedOccupancy, model, s_end, key, t) = 0.0
+_horizon_jump(fn::PathFunctional, model, s_end, key, t) = 0.0
 
 # Maintain the estimator-owned enabling bookkeeping: which record index enabled
 # each currently-enabled clock, and the state it was enabled from. The record's
@@ -278,9 +278,9 @@ _horizon_jump(fn::PathFunctional, model, s_end, key) = 0.0
 # candidate that never fires exists only here — state the estimator owns
 # because nothing else provides it.
 function _spa_update_enabled!(enabled_at::Dict, enab_state::Dict, model, s_pre,
-                              en_pre, fired, k::Int)
+                              en_pre, fired, k::Int, t)
     old = en_pre
-    (snew, ch) = fire_changes(model, s_pre, fired)
+    (snew, ch) = fire_changes(model, s_pre, fired, t)
     newk = enabled_update(model, snew, fired, en_pre, ch)
     delete!(enabled_at, fired)
     delete!(enab_state, fired)
@@ -397,7 +397,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
             for (ckey, _) in agepairs
                 ckey == ekey && continue
                 ncand += 1
-                if prefix_settles(fn, hit_already) || zero_jump_certified(fn, model, s_pre, en_pre, ekey, ckey)
+                if prefix_settles(fn, hit_already) || zero_jump_certified(fn, model, s_pre, en_pre, ekey, ckey, tk)
                     nskip += 1
                     continue
                 end
@@ -416,7 +416,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
                 # already enabled BEFORE e_k fired.
                 if haskey(age_at_tk, cnext) && cnext != ekey
                     ncand += 1
-                    if prefix_settles(fn, hit_already) || zero_jump_certified(fn, model, s_pre, en_pre, ekey, cnext)
+                    if prefix_settles(fn, hit_already) || zero_jump_certified(fn, model, s_pre, en_pre, ekey, cnext, tk)
                         nskip += 1
                     else
                         sched = branch_schedule(w)   # post-commit; first entry is cnext
@@ -429,7 +429,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
 
         push!(keys_tr, ekey)
         push!(times_tr, tk)
-        (s_twin, en_twin) = _spa_update_enabled!(enabled_at, enab_state, model, s_pre, en_pre, ekey, k)
+        (s_twin, en_twin) = _spa_update_enabled!(enabled_at, enab_state, model, s_pre, en_pre, ekey, k, tk)
         if fn isa FirstPassageTime && !hit_already && fn.pred(s_twin)
             hit_already = true
             break   # the record past the hit carries no more information
@@ -446,7 +446,7 @@ function _spa_replication(w, model, θ0::Vector{Float64}, fn::PathFunctional,
         s_end = s_twin
         tend = branch_time(w)
         for (kk, age) in branch_enabled_ages(w)
-            hj = _horizon_jump(fn, model, s_end, kk)
+            hj = _horizon_jump(fn, model, s_end, kk, Float64(horizon))
             hj == 0.0 && continue
             push!(cands, _SpaCandidate{K,St}(0, kk, age + (horizon - tend),
                                              get(enabled_at, kk, 0), enab_state[kk],

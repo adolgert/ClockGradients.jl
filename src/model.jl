@@ -125,13 +125,20 @@ bookkeeping — per-clock enabling times, wall-clock-anchored laws — must stam
 the firing time into the new state, and every internal caller has that time in
 scope. The default forwards to the three-argument form, so a time-free model
 defines only that one; a time-needing model defines only the four-argument
-form. Estimator paths that have not yet been threaded (SPA's commuting gates,
-the conformance walker) still call the three-argument form and therefore fail
+form. The one path not yet threaded (the conformance walker's random
+trajectories) still calls the three-argument form and therefore fails
 loudly, not silently, on a model that defines only the time-aware method.
 """
 function fire end
 
 fire(model, state, key, t) = fire(model, state, key)
+
+# The time-aware form of fire_changes, mirroring `fire`'s CD-1 pair: the
+# default routes to the three-argument chain so time-free models (including
+# those with a custom incremental fire_changes) are untouched, and a
+# time-needing model defines only the four-argument method. Unthreaded
+# callers of the three-argument form fail loudly on such a model.
+fire_changes(model, state, key, t) = fire_changes(model, state, key)
 
 """
     states_equal(model, a, b) -> Bool
