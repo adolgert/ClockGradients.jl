@@ -102,7 +102,7 @@ function _replay_redraw(model, θ::AbstractVector, record::GradientRecord)
         "last-draw recurrence would misread — use the carry chain replay instead."))
     T = typeof(one(eltype(θ)) * 1.0)
     guard = T <: ForwardDiff.Dual
-    states = _fold_states(model, record.key)
+    states = _fold_states(model, record.key, record.time)
     n = length(record)
     times = Vector{T}(undef, n)
     for k in 1:n
@@ -126,7 +126,7 @@ function _replay_carry(model, θ::AbstractVector, record::GradientRecord)
         "uniform, not the enabling-draw uniform the chain pushforward starts from."))
     T = typeof(one(eltype(θ)) * 1.0)
     guard = T <: ForwardDiff.Dual
-    states = _fold_states(model, record.key)
+    states = _fold_states(model, record.key, record.time)
     n = length(record)
     times = Vector{T}(undef, n)
     for k in 1:n

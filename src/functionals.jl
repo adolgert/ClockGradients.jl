@@ -83,13 +83,17 @@ end
 
 # Fold `fire` over the key sequence from `initial_state`. Returns the n+1 states
 # states[1] = initial (before firing 1), states[k+1] = state after firing k.
-function _fold_states(model, keys::AbstractVector)
+# `times === nothing` serves hand-built time-free trajectories: the CD-1
+# fallback ignores the NaN, and a time-needing model that reaches it fails in
+# its own arithmetic rather than silently mis-anchoring.
+function _fold_states(model, keys::AbstractVector, times=nothing)
     s0 = initial_state(model)
     states = Vector{typeof(s0)}(undef, length(keys) + 1)
     states[1] = s0
     state = s0
     for (k, key) in enumerate(keys)
-        state = fire(model, state, key)
+        t = times === nothing ? NaN : Float64(times[k])
+        state = fire(model, state, key, t)
         states[k + 1] = state
     end
     states
@@ -97,33 +101,37 @@ end
 
 """
     lower(fn::PathFunctional, model, record::GradientRecord) -> lowered struct
-    lower(fn::PathFunctional, model, keys, horizon) -> lowered struct
+    lower(fn::PathFunctional, model, keys, horizon[, times]) -> lowered struct
 
 Lower a path functional against a trajectory to a flat, θ-free struct. The
-`GradientRecord` form reads the record's key sequence and horizon; the
-`(keys, horizon)` form is for hand-built trajectories in tests.
+`GradientRecord` form reads the record's key sequence, horizon, and firing
+times (CD-1: the fold passes each firing's time to `fire`); the
+`(keys, horizon)` form is for hand-built time-free trajectories in tests.
 """
 lower(fn::PathFunctional, model, record::GradientRecord) =
-    lower(fn, model, record.key, record.horizon)
+    lower(fn, model, record.key, record.horizon, record.time)
 
-function lower(fn::IntegratedOccupancy, model, keys::AbstractVector, horizon::Real)
+function lower(fn::IntegratedOccupancy, model, keys::AbstractVector, horizon::Real,
+               times=nothing)
     isfinite(horizon) ||
         throw(ArgumentError("IntegratedOccupancy needs a finite horizon"))
-    states = _fold_states(model, keys)
+    states = _fold_states(model, keys, times)
     n = length(keys)
     LoweredOccupancy([Float64(fn.g(states[k])) for k in 1:n],
                      Float64(fn.g(states[n + 1])), Float64(horizon))
 end
 
-function lower(fn::TerminalObservable, model, keys::AbstractVector, horizon::Real)
+function lower(fn::TerminalObservable, model, keys::AbstractVector, horizon::Real,
+               times=nothing)
     isfinite(horizon) ||
         throw(ArgumentError("TerminalObservable needs a finite horizon"))
-    states = _fold_states(model, keys)
+    states = _fold_states(model, keys, times)
     LoweredTerminal(Float64(fn.g(states[end])))
 end
 
-function lower(fn::FirstPassageTime, model, keys::AbstractVector, horizon::Real)
-    states = _fold_states(model, keys)
+function lower(fn::FirstPassageTime, model, keys::AbstractVector, horizon::Real,
+               times=nothing)
+    states = _fold_states(model, keys, times)
     for k in 1:length(keys)
         fn.pred(states[k + 1]) && return LoweredFirstPassage(k)
     end

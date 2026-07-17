@@ -112,13 +112,26 @@ clock_distribution(model, θ::AbstractVector, key, state) =
 
 """
     fire(model, state, key) -> new state
+    fire(model, state, key, t) -> new state
 
 The (pure, deterministic) state transition when clock `key` fires. Returns a
 NEW state; must not mutate `state` (see `initial_state`). θ does not appear:
 firing changes the discrete state, and only which distributions are then
 enabled — never a rate — depends on θ.
+
+The four-argument form receives the firing time `t` (contract delta CD-1,
+Concourse's `notes/model_definition.tex`): a model whose state carries clock
+bookkeeping — per-clock enabling times, wall-clock-anchored laws — must stamp
+the firing time into the new state, and every internal caller has that time in
+scope. The default forwards to the three-argument form, so a time-free model
+defines only that one; a time-needing model defines only the four-argument
+form. Estimator paths that have not yet been threaded (SPA's commuting gates,
+the conformance walker) still call the three-argument form and therefore fail
+loudly, not silently, on a model that defines only the time-aware method.
 """
 function fire end
+
+fire(model, state, key, t) = fire(model, state, key)
 
 """
     states_equal(model, a, b) -> Bool

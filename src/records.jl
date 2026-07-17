@@ -104,7 +104,7 @@ mid-flight re-evaluation). With a `θ0`-less Bookkeeper the change test is skipp
 so every chain stays a single enabling segment.
 """
 function advance!(bk::Bookkeeper{M,K}, k::Integer, key::K, time::Float64) where {M,K}
-    bk.state = fire(bk.model, bk.state, key)
+    bk.state = fire(bk.model, bk.state, key, time)
     delete!(bk.te, key)          # the fired clock is always cancelled
     delete!(bk.chain, key)
     delete!(bk.dist, key)
@@ -363,7 +363,7 @@ function GradientRecord(model, θ0::AbstractVector, keys::AbstractVector,
     timev = Float64.(collect(times))
     n = length(keyv)
     enable_step, draw_step, _, seg_offset, seg_step = _walk(model, θ0, keyv, timev)
-    states = _fold_states(model, keyv)   # states[j+1] = state after firing j
+    states = _fold_states(model, keyv, timev)   # states[j+1] = state after firing j
     logu = Vector{Float64}(undef, n)
     for k in 1:n
         es = enable_step[k]

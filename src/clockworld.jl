@@ -68,7 +68,7 @@ end
 # the model transition and the GSMP retention rule to the survivor set.
 function _apply_firing!(w::ClockWorld, key, tstar::Float64)
     old_keys = enabled(w.model, w.state)
-    new_state = fire(w.model, w.state, key)
+    new_state = fire(w.model, w.state, key, tstar)
     new_keys = enabled(w.model, new_state)
     for k in old_keys
         k == key && continue                      # already consumed by the sampler

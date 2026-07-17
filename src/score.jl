@@ -56,7 +56,7 @@ function score_loglikelihood(model, θ::AbstractVector, record::GradientRecord)
         end
         dwin = clock_distribution(model, θ, key, state)
         ll += loghazard(dwin, t1 - te[key])
-        state = fire(model, state, key)
+        state = fire(model, state, key, t1)
         delete!(te, key)
         t = t1
     end
@@ -170,7 +170,7 @@ function run_recorded(rng::AbstractRNG, model, θ, method; horizon::Real)
         when > horizon && break
         fire!(ctx, which, when)
         delete!(active, which)          # the fired clock is removed by fire!
-        state = fire(model, state, which)
+        state = fire(model, state, which, when)
 
         cur = enabled(model, state)
         curset = Set(cur)
