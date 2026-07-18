@@ -36,6 +36,9 @@
 # framework extensions) both consult it, so extending the set here extends both.
 const DUAL_SAFE_DISTRIBUTIONS = (Exponential, Weibull, LogNormal)
 
+# Extension point: a wrapper distribution whose `invlogccdf` delegates to a
+# base law's `invlogccdf` plus dual-friendly arithmetic may add a method that
+# recurses on the base (e.g. Concourse's SharedRemaining).
 _dual_safe(d::UnivariateDistribution) = any(D -> d isa D, DUAL_SAFE_DISTRIBUTIONS)
 
 _dual_safe_names() =
